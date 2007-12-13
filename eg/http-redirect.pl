@@ -1,0 +1,67 @@
+#!/usr/bin/perl
+# $Id: http-redirect.pl,v 1.3 2007/12/13 23:00:08 dk Exp $
+
+use strict;
+use HTTP::Request;
+use HTTP::Response;
+use IO::Lambda qw(:all);
+use IO::Socket::INET;
+
+# create chain of event on an existsing lambda object, that when
+# finished, will contain the result
+
+sub http_request
+{
+	my $req    = shift;
+	my $socket = IO::Socket::INET-> new(
+		PeerAddr => $req-> uri-> host,
+		PeerPort => $req-> uri-> port,
+	);
+
+	lambda {
+		return "socket error:$@" unless $socket;
+		context $socket;
+	write  {
+		print $socket $req-> as_string or return "error:$!";
+		my $buf = '';
+	read   {
+		my $n = sysread( $socket, $buf, 1024, length($buf));
+		return "error:$!" unless defined $n;
+		return HTTP::Response-> parse($buf) unless $n;
+		again;
+	}}};
+}
+
+# wrap http_request by listening to events from http_request
+sub http_redirect_request
+{
+	my $req = shift;
+
+	lambda   {
+		context http_request($req);
+		tail {
+			my $result = shift;
+			return $result unless ref($result);
+			return $result if $result-> code !~ /^30/;
+			$req-> uri( $result-> header('Location'));
+			warn "redirected to ", $req-> uri, "\n";
+
+			context http_request($req);
+			again;
+		}
+	};
+}
+
+# main call
+my $r = HTTP::Request-> new( GET => 'http://google.com/');
+$r-> protocol('HTTP/1.1');
+$r-> headers-> header( Host => $r-> uri-> host);
+$r-> headers-> header( Connection => 'close');
+
+this http_redirect_request( $r);
+my $r = this-> wait;
+unless ( ref($r)) {
+	print "some error:$r\n";
+} else {
+	print "read ", length($r->as_string), " bytes\n";
+}
