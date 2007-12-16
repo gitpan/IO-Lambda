@@ -1,4 +1,4 @@
-# $Id: Lambda.pm,v 1.15 2007/12/15 23:03:15 dk Exp $
+# $Id: Lambda.pm,v 1.19 2007/12/16 20:20:50 dk Exp $
 
 package IO::Lambda;
 
@@ -14,7 +14,7 @@ use vars qw(
 	$THIS @CONTEXT $METHOD $CALLBACK
 	$DEBUG
 );
-$VERSION     = 0.04;
+$VERSION     = 0.05;
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -355,7 +355,7 @@ sub wait
 	while ( 1) {
 		my $n = drive;
 		last if $self-> {stopped};
-		croak "IO::Lambda: infinite loop detected" if not($n) and $LOOP-> empty;
+		$_-> yield for @LOOPS;
 		$LOOP-> yield;
 	}
 	return $self-> peek;
@@ -371,7 +371,7 @@ sub wait_for_all
 		push @ret, map { $_-> peek } grep { $_-> {stopped} } @objects;
 		@objects = grep { not $_-> {stopped} } @objects;
 		last unless @objects;
-		croak "IO::Lambda: infinite loop detected" if not($n) and $LOOP-> empty;
+		$_-> yield for @LOOPS;
 		$LOOP-> yield;
 	}
 	return @ret;
@@ -385,10 +385,9 @@ sub wait_for_any
 	$_-> step for @objects;
 	while ( 1) {
 		my $n = drive;
-		$_-> yield for @LOOPS;
 		@objects = grep { $_-> {stopped} } @objects;
 		return @objects if @objects;
-		croak "IO::Lambda: infinite loop detected" if not($n) and $LOOP-> empty;
+		$_-> yield for @LOOPS;
 		$LOOP-> yield;
 	}
 }
@@ -620,6 +619,8 @@ sub resolve
 	@$in = grep { $rec != $_ } @$in;
 	die _d($self, "stray condvar event $rec (@$rec)")
 		if $nn == @$in or $self != $rec->[WATCH_OBJ];
+
+	undef $rec-> [WATCH_OBJ]; # unneeded references
 
 	unless ( @$in) {
 		warn _d( $self, 'stopped') if $DEBUG;
@@ -1190,7 +1191,7 @@ Can be also called as package method.
 
 =item bind @args
 
-Creates an event record that contains the lambda and C<@args>, and return it.
+Creates an event record that contains the lambda and C<@args>, and returns it.
 The lambda won't finish until this event is returned with C<resolve>.
 
 C<bind> can be called several times on a single lambda; each event requires
@@ -1209,7 +1210,7 @@ callbacks, which is intentional.
 
 =head1 SEE ALSO
 
-L<Coro>, L<threads>, L<Event::Lib>.
+L<Coro>, L<threads>, L<POE>.
 
 =head1 LICENSE AND COPYRIGHT
 
@@ -1223,4 +1224,3 @@ under the same terms as Perl itself.
 Dmitry Karasik, E<lt>dmitry@karasik.eu.orgE<gt>.
 
 =cut
-
