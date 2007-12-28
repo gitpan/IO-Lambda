@@ -1,4 +1,4 @@
-# $Id: HTTPS.pm,v 1.4 2007/12/16 20:20:16 dk Exp $
+# $Id: HTTPS.pm,v 1.6 2007/12/28 17:32:28 dk Exp $
 package IO::Lambda::HTTPS;
 
 use vars qw(@ISA @EXPORT_OK);
@@ -89,23 +89,45 @@ explanation of the behavior.
 
    use HTTP::Request;
    use IO::Lambda qw(:all);
-   use IO::Lambda::HTTP qw(https_request);
+   use IO::Lambda::HTTPS qw(https_request);
    
-   my $r = HTTP::Request-> new( GET => "https://addons.mozilla.org/en-US/firefox");
+   my $req = HTTP::Request-> new( GET => "https://addons.mozilla.org/en-US/firefox");
    $req-> protocol('HTTP/1.1');
-   $req-> headers-> header( Host => $a-> uri-> host);
+   $req-> headers-> header( Host => $req-> uri-> host);
    $req-> headers-> header( Connection => 'close');
    
-   this http_request {
-      my $res = shift;
-      if ( ref($result)) {
-         print "good:", length($result-> content), "\n";
-      } else {
-         print "bad:$result\n";
+   this lambda {
+      context shift;
+      https_request {
+         my $result = shift;
+         if ( ref($result)) {
+            print "good:", length($result-> content), "\n";
+         } else {
+            print "bad:$result\n";
+         }
       }
    };
 
-   this-> wait;
+   this-> wait($req);
+
+=head1 API
+
+=over
+
+=item https_request $HTTP::Request
+
+C<https_request> is a lambda predicate that accepts C<HTTP::Request> object in
+the context. Returns either a C<HTTP::Response> object on success, or error
+string otherwise.
+
+=item new $HTTP::Request
+
+Stores C<HTTP::Request> object and returns a new lambda that will finish 
+when the request associated with it completes. The lambda callback will
+be passed either a C<HTTP::Response> object on success, or error
+string otherwise. 
+
+=back
 
 =head1 SEE ALSO
 
