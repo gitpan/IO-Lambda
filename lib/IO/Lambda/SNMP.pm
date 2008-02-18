@@ -1,4 +1,4 @@
-# $Id: SNMP.pm,v 1.4 2008/02/01 10:49:15 dk Exp $
+# $Id: SNMP.pm,v 1.6 2008/02/01 12:49:18 dk Exp $
 package IO::Lambda::SNMP;
 use vars qw(
 	$DEBUG
@@ -49,7 +49,7 @@ sub yield
 	# Handle snmp code here
 	SNMP::MainLoop(1e-6);
 	warn "snmp.yield handled $EVENTS events\n" if $DEBUG;
-	# Main event loop will be caller after this sub is finished -
+	# Main event loop will be called after this sub is finished -
 	# register fds and timers
 	reshuffle_fds();
 
@@ -91,7 +91,6 @@ sub reshuffle_fds
 		$IO::Lambda::LOOP-> watch( $ACTIVE_FDS{$passive} = $PASSIVE_FDS{$passive} );
 		warn "snmp.resubmit: $passive\n" if $DEBUG;
 	}
-	warn "snmp.do not resubmit: [", join(' ', sort keys %PASSIVE_FDS), "]\n" if $DEBUG;
 	%PASSIVE_FDS = ();
 
 	# register new handles

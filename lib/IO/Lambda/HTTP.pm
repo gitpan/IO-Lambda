@@ -1,4 +1,4 @@
-# $Id: HTTP.pm,v 1.19 2008/01/30 13:20:09 dk Exp $
+# $Id: HTTP.pm,v 1.22 2008/02/15 19:05:40 dk Exp $
 package IO::Lambda::HTTP;
 use vars qw(@ISA @EXPORT_OK);
 @ISA = qw(Exporter);
@@ -40,7 +40,7 @@ sub new
 	return $self-> handle_redirect( $req);
 }
 
-# reissue the request if it request returns 30X code
+# reissue the request if it returns 30X code
 sub handle_redirect
 {
 	my ( $self, $req) = @_;
@@ -61,7 +61,7 @@ sub handle_redirect
 		$req-> uri( $response-> header('Location'));
 		$req-> headers-> header( Host => $req-> uri-> host);
 
-		context $self-> handle_request( $req);
+		context $self-> handle_connection( $req);
 		again;
 	}};
 }
@@ -240,7 +240,7 @@ sub handle_request
 			if $self-> {chunked} = $te =~ /^chunked\s*$/i;
 	
 		# just read as much as possible then
-		return $self-> http_tail;
+		return $self-> http_tail if $proto < 1.1;
 	}}}}}
 }
 

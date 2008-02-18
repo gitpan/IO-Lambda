@@ -21,4 +21,5 @@ eg/sequential.pl
 eg/parallel.pl
 eg/http-redirect.pl
 eg/snmp.pl
+eg/loop.pl
 META.yml                                 Module meta-data (added by MakeMaker)
