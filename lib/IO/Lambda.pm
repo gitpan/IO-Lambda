@@ -1,4 +1,4 @@
-# $Id: Lambda.pm,v 1.28 2008/02/18 10:49:07 dk Exp $
+# $Id: Lambda.pm,v 1.31 2008/05/06 20:47:57 dk Exp $
 
 package IO::Lambda;
 
@@ -13,7 +13,7 @@ use vars qw(
 	$THIS @CONTEXT $METHOD $CALLBACK
 	$DEBUG
 );
-$VERSION     = '0.10';
+$VERSION     = '0.11';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -1477,7 +1477,7 @@ Removes C<$event> from the internal waiting list. If lambda has no more
 events to wait, notifies eventual lambdas that wait to the objects, and
 the stops.
 
-Note that C<resolve> doesn't call provide any means to call associated
+Note that C<resolve> doesn't provide any means to call associated
 callbacks, which is intentional.
 
 =back
@@ -1485,6 +1485,22 @@ callbacks, which is intentional.
 =head1 SEE ALSO
 
 L<Coro>, L<threads>, L<POE>.
+
+The package contains backends for other libraries that benefit from 
+asynchronous I/O, but doesn't mark them as explicit dependencies.
+If you need to use them, install these separately:
+
+=over
+
+=item *
+
+L<IO::Lambda::SNMP> requires L<SNMP>.
+
+=item *
+
+L<IO::Lambda::DNS> requires L<Net::DNS>.
+
+=back
 
 =head1 LICENSE AND COPYRIGHT
 

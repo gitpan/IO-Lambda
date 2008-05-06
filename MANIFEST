@@ -6,6 +6,7 @@ lib/IO/Lambda.pm
 lib/IO/Lambda/HTTP.pm
 lib/IO/Lambda/HTTPS.pm
 lib/IO/Lambda/SNMP.pm
+lib/IO/Lambda/DNS.pm
 lib/IO/Lambda/Loop/Select.pm
 lib/IO/Lambda/Loop/Prima.pm
 lib/IO/Lambda/Loop/AnyEvent.pm
@@ -15,6 +16,8 @@ t/03_lambda_api.t
 t/04_tcp.t
 t/05_condvar.t
 t/06_stream.t
+t/07_dns.t
+t/08_http.t
 t/98_pod.t
 t/99_pod_coverage.t
 eg/sequential.pl
@@ -22,4 +25,5 @@ eg/parallel.pl
 eg/http-redirect.pl
 eg/snmp.pl
 eg/loop.pl
+eg/dns.pl
 META.yml                                 Module meta-data (added by MakeMaker)
