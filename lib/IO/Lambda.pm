@@ -1,4 +1,4 @@
-# $Id: Lambda.pm,v 1.31 2008/05/06 20:47:57 dk Exp $
+# $Id: Lambda.pm,v 1.35 2008/05/07 13:25:12 dk Exp $
 
 package IO::Lambda;
 
@@ -6,6 +6,7 @@ use Carp;
 use strict;
 use warnings;
 use Exporter;
+use Time::HiRes qw(time);
 use vars qw(
 	$LOOP %EVENTS @LOOPS
 	$VERSION @ISA
@@ -13,7 +14,7 @@ use vars qw(
 	$THIS @CONTEXT $METHOD $CALLBACK
 	$DEBUG
 );
-$VERSION     = '0.11';
+$VERSION     = '0.12';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -70,7 +71,7 @@ sub _d_in  { $_doffs++ }
 sub _d_out { $_doffs-- if $_doffs }
 sub _d     { ('  ' x $_doffs), _obj(shift), ': ', @_, "\n" }
 sub _obj   { $_[0] =~ /0x([\w]+)/; "lambda($1)." . ( $_[0]->{caller} || '()' ) }
-sub _t     { defined($_[0]) ? ( "time(", $_[0]-time, ")" ) : () }
+sub _t     { defined($_[0]) ? ( "time(", $_[0]-time(), ")" ) : () }
 sub _ev
 {
 	$_[0] =~ /0x([\w]+)/;
@@ -124,6 +125,8 @@ sub watch_io
 	croak "can't register events on a stopped lambda" if $self-> {stopped};
 	croak "bad io flags" if 0 == ($flags & (IO_READ|IO_WRITE|IO_EXCEPTION));
 
+	$deadline += time if defined($deadline) and $deadline < 1_000_000_000;
+
 	my $rec = [
 		$self,
 		$deadline,
@@ -147,7 +150,8 @@ sub watch_timer
 
 	croak "can't register events on a stopped lambda" if $self-> {stopped};
 	croak "$self: time is undefined" unless defined $deadline;
-
+	
+	$deadline += time if defined($deadline) and $deadline < 1_000_000_000;
 	my $rec = [
 		$self,
 		$deadline,
@@ -876,7 +880,7 @@ Given a socket, create a lambda that implements http protocol
     sub talk
     {
         my $req    = shift;
-        my $socket = IO::Socket::INET-> new( $req-> host, $req-> port);
+        my $socket = IO::Socket::INET-> new( PeerAddr => $req-> host, PeerPort => 80);
 
 	lambda {
 	    context $socket;
@@ -1064,13 +1068,13 @@ which means that explicitly setting C<this> will always clear the context.
 
 =head2 Data and execution flow
 
-Lambda is initially called with arguments passed from outside. These arguments
-can be stored using C<call> method; C<wait> and C<tail> also issues C<call>
+A lambda is initially called with arguments passed from outside. These arguments
+can be stored using C<call> method; C<wait> and C<tail> also issue C<call>
 internally, thus replacing any previous data stored by C<call>. Inside the
 lambda these arguments are available as C<@_>.
 
 Whatever is returned by a predicate callback (including C<lambda> predicate),
-will be passed as C<@_> to the next callback, or to outside, if the lambda is
+will be passed as C<@_> to the next callback, or to the outside, if the lambda is
 finished. The result of a finished lambda is available by C<peek> method, that
 returns either all array of data available in the array context, or first item
 in the array otherwise. C<wait> returns the same data as C<peek> does.
@@ -1097,11 +1101,11 @@ objects as soon as possible.
 
 =head2 Time
 
-Timers and I/O timeouts are given not in the timeout values, as it usually is
-in event libraries, but as deadlines in (fractional) seconds since epoch. This
-decision, strange at first sight, actually helps a lot when total execution
-time is to be tracked. For example, the following code reads as many bytes from
-a socket within 5 seconds:
+Timers and I/O timeouts can be given not only in the timeout values, as it
+usually is in event libraries, but also as deadlines in (fractional) seconds
+since epoch. This decision, strange at first sight, actually helps a lot when
+total execution time is to be tracked. For example, the following code reads as
+many bytes from a socket within 5 seconds:
 
    lambda {
        my $buf = '';
@@ -1116,8 +1120,34 @@ a socket within 5 seconds:
        }
    };
 
-Rewriting it with C<read> semantics that accepts time as timeout instead, is
-left as an exercise to the reader.
+Rewriting the same code with C<read> semantics that accepts time as timeout instead, 
+would be not that elegant:
+   
+   lambda {
+       my $buf = '';
+       my $time_left = 5;
+       my $now = time;
+       context $socket, $time_left;
+       read {
+           if ( shift ) {
+	       if (sysread $socket, $buf, 1024, length($buf)) {
+	           $time_left -= (time - $now);
+		   $now = time;
+		   context $socket, $time_left;
+	           return again;
+	       }
+	   } else {
+	       print "oops! a timeout\n";
+	   }
+	   $buf;
+       }
+   };
+
+However, the exact opposite is true for C<sleep>. The following two lines
+both sleep 5 seconds:
+
+   lambda { context 5;        sleep {} }
+   lambda { context time + 5; sleep {} }
 
 Internally, timers use C<Time::HiRes::time> that gives fractional number of
 seconds. This however is not required for the caller, in which case timeouts
@@ -1158,7 +1188,7 @@ Creates a new C<IO::Lambda> object.
 Executes either when C<$filehandle> becomes readable, or after C<$deadline>.
 Passes one argument, which is either TRUE if the handle is readable, or FALSE
 if time is expired. If C<deadline> is C<undef>, then no timeout is registered,
-that means that it will never execute with FALSE.
+that means that it will never be called with FALSE.
 
 =item write($filehandle, $deadline = undef)
 
@@ -1193,7 +1223,7 @@ unordered results of the objects.
 =item again(@frame = ())
 
 Restarts the current state with the current context. All the predicates above,
-excluding C<lambda>, are restartable. The code
+excluding C<lambda>, are restartable ( see C<start> for this ). The code
 
    context $obj1;
    tail {
@@ -1242,7 +1272,7 @@ instead of
 
 If called without parameters, returns the current callback frame, that
 can be later used in C<again>. Otherwise, replaces the internal frame
-variables, that doesn't afect anything immediately, but will be used by C<again>
+variables, that doesn't affect anything immediately, but will be used by C<again>
 that is called without parameters.
 
 This property is only used when the predicate inside which C<this_frame> was
@@ -1263,7 +1293,8 @@ Example:
     }
 
 The outermost tail callback will be called twice: first time in the normal course of event,
-and second time as a result of the C<again> call.
+and second time as a result of the C<again> call. C<this_frame> and C<alarm> thus provide
+a kind of restartable continuations.
 
 =back
 
@@ -1278,12 +1309,12 @@ for C<sysread> and C<syswrite>; this section tells about higher-level lambdas
 that relate to these as the said C<readline> to C<sysread>.
 
 All functions in this section return a lambda, that does the actual work.  Not
-unlike as a class' constructor returns a newly created class instance, these
-functions return newly created lambdas, that do the actual work. Therefore,
-these functions are documented here as having two inputs and one output, as
-for example a function C<sysreader> is a function that takes 0 parameters,
-always returns a new lambda, and this lambda, in turn, takes four parameters
-and returns two. Such function will be described as
+unlike as a class constructor returns a newly created class instance, these
+functions return newly created lambdas. Therefore, these functions are
+documented here as having two inputs and one output, as for example a function
+C<sysreader> is a function that takes 0 parameters, always returns a new
+lambda, and this lambda, in turn, takes four parameters and returns two. Such
+function will be described as
 
     # sysreader() :: ($fh,$buf,$length,$deadline) -> ($result,$error)
 
@@ -1313,7 +1344,7 @@ Creates lambda that will accept all the parameters used by C<syswrite> plus
 C<$deadline>. The lambda tries to write C<$length> bytes to C<$fh> from C<$buf>
 from C<$offset>, when C<$fh> becomes available for writing. If C<$deadline>
 expires, fails with C<'timeout'> error. On successful write, returns number of
-bytes written, or <$!> otherwise.
+bytes written, or C<$!> otherwise.
 
 =item readbuf($reader = sysreader()) :: ($fh, $buf, $cond, $deadline) -> ioresult
 
@@ -1333,7 +1364,7 @@ The lambda will succeed when exactly C<$cond> bytes are read from C<$fh>.
 
 =item regexp
 
-The lambda will succeed when exactly C<$cond> matches the content of C<$buf>.
+The lambda will succeed when C<$cond> matches the content of C<$buf>.
 Note that C<readbuf> saves and restores value of C<pos($$buf)>, so use of
 C<\G> is encouraged here.
 
@@ -1353,8 +1384,8 @@ of file is reported as an error.
 Creates a lambda that is able to perform buffered writes to C<$fh>, either
 using custom lambda C<writer>, or using one newly generated by C<syswriter>.
 The lambda when called, will write continually C<$buf> (from C<$offset>,
-C<$length> bytes) and will either fail on timeout, I/O error, or end of file,
-or succeed when C<$length> bytes were written successfully.
+C<$length> bytes) and will either fail on timeout or I/O error,
+or succeed when C<$length> bytes are written successfully.
 
 =item getline($reader) :: ($fh, $buf, $deadline) -> ioresult
 
@@ -1370,6 +1401,9 @@ functionality is also available for object-style programming by design.
 Together with the fact that lambda syntax is not exported by default, it thus
 leaves a place for possible implementations of independent syntaxes, either with
 or without lambdas, on top of the object API, without accessing the internals.
+
+The object API is mostly targeted to developers that need to connect
+third-party asynchronous events with lambda interface.
 
 =over
 
@@ -1429,6 +1463,11 @@ At any given time, returns stored data that are either passed
 in by C<call> if the lambda is in the passive state, or stored result
 of execution of the latest callback.
 
+=item start
+
+Starts a passive lambda. Can be used for effective restart of the whole lambda;
+the only requirement is that the lambda should have no pending events.
+
 =item call @args
 
 Stores C<@args> internally, to be passed on to the first callback. Only
@@ -1487,18 +1526,22 @@ callbacks, which is intentional.
 L<Coro>, L<threads>, L<POE>.
 
 The package contains backends for other libraries that benefit from 
-asynchronous I/O, but doesn't mark them as explicit dependencies.
-If you need to use them, install these separately:
+asynchronous I/O, but may or may not list them as explicit dependency.
+If you need to use these, install these separately:
 
 =over
 
 =item *
 
-L<IO::Lambda::SNMP> requires L<SNMP>.
+L<IO::Lambda::SNMP> requires L<SNMP> (not a prerequisite).
 
 =item *
 
 L<IO::Lambda::DNS> requires L<Net::DNS>.
+
+=item *
+
+L<IO::Lambda::Signal> requires functioning C<POSIX::waitpid>.
 
 =back
 
