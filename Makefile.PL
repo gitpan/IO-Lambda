@@ -1,4 +1,4 @@
-# $Id: Makefile.PL,v 1.2 2008/05/06 20:41:33 dk Exp $
+# $Id: Makefile.PL,v 1.5 2008/05/09 19:15:20 dk Exp $
 use ExtUtils::MakeMaker;
 use IO::Socket::INET;
 
@@ -14,7 +14,7 @@ if ($s) {
 	print <<EOT;
 	
 You appear to be directly connected to the Internet.  I have some tests
-that try to query live nameservers.
+that try to query live nameservers and google.
 	
 EOT
 	
@@ -33,9 +33,11 @@ WriteMakefile(
 	VERSION_FROM  => 'lib/IO/Lambda.pm',
 	PREREQ_PM     => {
 		'Net::DNS'          => 0,
+		'LWP'               => 0,
 		# 'IO::Socket::SSL' => 0,  # for HTTPS
 		# 'SNMP'            => 0,  # for IO::Lambda::SNMP
 		# 'AnyEvent'        => 0,  # for alternative event loop
+		# 'Authen::NTLM'    => 0,  # for HTTP authentication
 	},
 	clean         => { FILES => 't/online.enabled' },
 );

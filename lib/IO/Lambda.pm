@@ -1,4 +1,4 @@
-# $Id: Lambda.pm,v 1.35 2008/05/07 13:25:12 dk Exp $
+# $Id: Lambda.pm,v 1.37 2008/05/09 13:43:46 dk Exp $
 
 package IO::Lambda;
 
@@ -14,7 +14,7 @@ use vars qw(
 	$THIS @CONTEXT $METHOD $CALLBACK
 	$DEBUG
 );
-$VERSION     = '0.12';
+$VERSION     = '0.13';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -1542,6 +1542,10 @@ L<IO::Lambda::DNS> requires L<Net::DNS>.
 =item *
 
 L<IO::Lambda::Signal> requires functioning C<POSIX::waitpid>.
+
+=item *
+
+L<IO::Lambda::HTTP::Authen::NTLM> requires functioning L<Authen::NTLM>.
 
 =back
 
