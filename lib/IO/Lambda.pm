@@ -14,7 +14,7 @@ use vars qw(
 	$THIS @CONTEXT $METHOD $CALLBACK
 	$DEBUG
 );
-$VERSION     = '0.13';
+$VERSION     = '0.14';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
