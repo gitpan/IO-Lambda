@@ -6,7 +6,6 @@ use Carp;
 use strict;
 use warnings;
 use Exporter;
-use Class::Prototyped;
 use Time::HiRes qw(time);
 use vars qw(
 	$LOOP %EVENTS @LOOPS
@@ -15,8 +14,8 @@ use vars qw(
 	$THIS @CONTEXT $METHOD $CALLBACK
 	$DEBUG
 );
-$VERSION     = '0.15';
-@ISA         = qw(Exporter Class::Prototyped);
+$VERSION     = '0.16';
+@ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
 	WATCH_OBJ WATCH_DEADLINE WATCH_LAMBDA WATCH_CALLBACK
