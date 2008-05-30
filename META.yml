@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:                IO-Lambda
-version:             0.18
+version:             0.19
 abstract:            non-blocking I/O in lambda style
 license:             ~
 author:              
@@ -10,6 +10,7 @@ distribution_type:   module
 requires:     
     LWP:                           0
     Net::DNS:                      0
+    URI:                           0
 meta-spec:
     url:     http://module-build.sourceforge.net/META-spec-v1.3.html
     version: 1.3

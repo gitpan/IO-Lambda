@@ -1,4 +1,4 @@
-# $Id: HTTP.pm,v 1.31 2008/05/25 06:50:30 dk Exp $
+# $Id: HTTP.pm,v 1.33 2008/05/30 11:44:27 dk Exp $
 package IO::Lambda::HTTP;
 use vars qw(@ISA @EXPORT_OK $DEBUG);
 @ISA = qw(Exporter);
@@ -12,11 +12,13 @@ use Socket;
 use Exporter;
 use IO::Socket;
 use HTTP::Response;
-use IO::Lambda qw(:lambda :stream state);
+use IO::Lambda qw(:lambda :stream);
 use Time::HiRes qw(time);
 
 sub http_request(&)
 {
+	return this-> override_handler('http_request', \&http_request, shift)
+		if this-> {override}->{http_request};
 	this-> add_tail(
 		shift,
 		\&http_request,
