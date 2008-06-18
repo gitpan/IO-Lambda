@@ -45,10 +45,10 @@ WriteMakefile(
 		'Net::DNS'          => 0,
 		'LWP'               => 0,
 		'URI'               => 0,
-		# 'IO::Socket::SSL' => 0,  # for HTTPS
-		# 'SNMP'            => 0,  # for IO::Lambda::SNMP
-		# 'AnyEvent'        => 0,  # for alternative event loop
-		# 'Authen::NTLM'    => 0,  # for HTTP authentication
+		# 'IO::Socket::SSL' => 0,     # for HTTPS
+		# 'SNMP'            => 0,     # for IO::Lambda::SNMP
+		# 'AnyEvent'        => 0,     # for alternative event loop
+		# 'Authen::NTLM'    => 1.05,  # for HTTP authentication
 	},
 	clean         => { FILES => 't/online.enabled' },
 );
