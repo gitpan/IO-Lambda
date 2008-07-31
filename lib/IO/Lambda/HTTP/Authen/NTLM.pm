@@ -1,4 +1,4 @@
-# $Id: NTLM.pm,v 1.4 2008/06/12 13:18:27 dk Exp $
+# $Id: NTLM.pm,v 1.5 2008/07/02 09:25:51 dk Exp $
 
 package IO::Lambda::HTTP::Authen::NTLM;
 
