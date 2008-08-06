@@ -1,4 +1,4 @@
-# $Id: Lambda.pm,v 1.53 2008/07/31 14:48:04 dk Exp $
+# $Id: Lambda.pm,v 1.56 2008/08/06 10:39:02 dk Exp $
 
 package IO::Lambda;
 
@@ -14,7 +14,7 @@ use vars qw(
 	$THIS @CONTEXT $METHOD $CALLBACK
 	$DEBUG
 );
-$VERSION     = '0.21';
+$VERSION     = '0.22';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -226,12 +226,6 @@ sub override
 	}
 }
 
-sub super
-{
-	croak "super() call outside overridden predicate" unless $_[0]-> {super};
-	$_[0]-> {super}-> [0]-> ($_[0]-> {super}-> [1]);
-}
-
 sub override_handler
 {
 	my ( $self, $method, $sub, $cb) = @_;
@@ -269,6 +263,46 @@ sub override_handler
 		}
 	}
 }
+
+# Insert a new callback to be called before original callback.
+# Needs to insert callbacks in {override} stack in reverse order,
+# because direct order serves LIFO order for override() callbacks, --
+# and that means FIFO for intercept() callbacks. But we also want LIFO. 
+sub intercept
+{
+	my ( $self, $method, $state, $cb) = ( 4 == @_) ? @_ : (@_[0,1],'*',$_[2]);
+		
+	return $self-> override( $method, $state, undef) unless $cb;
+
+	$self-> {override}->{$method} ||= [];
+	unshift @{$self-> {override}->{$method}}, [ $state, sub {
+		# this is called when lambda calls $method with $state
+		my ( undef, $sub, $orig_cb) = @_;
+		# $sub is a predicate, like read(&) or tail(&)
+		$sub->( sub {
+		# that (&) is finally called when IO event is there
+			local $self-> {super} = [$orig_cb];
+			&$cb;
+		});
+	} ];
+}
+
+sub super
+{
+	croak "super() call outside overridden predicate" unless $_[0]-> {super};
+	my $data = $_[0]-> {super};
+	if ( defined $data-> [1]) {
+		# override() super
+		return $data-> [0]-> ($data-> [1]);
+	} else {
+		# intercept() super
+		my $self = shift;
+		return defined($data->[0]) ? 
+			$data-> [0]-> (@_) :
+			( wantarray ? @_ : $_[0] );
+	}
+}
+
 
 # handle incoming asynchronous events
 sub io_handler
@@ -613,7 +647,7 @@ sub add_watch
 # readwrite($flags,$handle,$deadline)
 sub readwrite(&)
 {
-	return $THIS-> override_handler('readwrite', \&io, shift)
+	return $THIS-> override_handler('readwrite', \&readwrite, shift)
 		if $THIS-> {override}->{readwrite};
 
 	$THIS-> add_watch( 
@@ -983,9 +1017,9 @@ IO::Lambda - non-blocking I/O in lambda style
 
 This module is another attempt to fight the horrors of non-blocking I/O
 programming. The simplicity of the sequential programming is only available
-when one employs threads, coroutines, or Co-processes. Otherwise state machines
+when one employs threads, coroutines, or co-processes. Otherwise state machines
 are to be built, often quite complex, which fact doesn't help the clarity of
-the code. This module uses closures to achieve clarity of sequential
+the code. This module uses closures to approximate the sequential
 programming with single-process, single-thread, non-blocking I/O.
 
 =head1 SYNOPSIS
@@ -993,8 +1027,10 @@ programming with single-process, single-thread, non-blocking I/O.
 This is a fairly large document, so depending on your reading tastes, you may
 either read all from here - it begins with code examples, then with more code
 examples, then the explanation of basic concepts, and finally gets to the
-complex ones. Or, you may skip directly to the fun part (L<Stream IO>, where
-functional style mixes with I/O. Also note that C<io> and C<lambda> are synonyms.
+complex ones. Or, you may skip directly to the fun part (L<Stream IO>), where
+functional style mixes with I/O. Also note that C<io> and C<lambda> are synonyms - 
+I personally prefer C<lambda> but some find the word slighly inappropriate, hence
+C<io>.
 
 =head2 Read line by line from filehandle
 
@@ -1722,12 +1758,41 @@ then stops.
 Note that C<resolve> doesn't provide any means to call associated
 callbacks, which is intentional.
 
+=item intercept $PREDICATE [ $STATE ] $CODEREF
+
+Installs a C<$CODEREF> as a overriding hook for a predicate callback, where
+predicate is C<tail>, C<read>, C<write>, etc.  Whenever a the predicate
+callback is being called, the hook will be called instead, that should be able
+to analyze the call, and allow or deny it the further processing. 
+
+C<$STATE>, if omitted, is equivalent to C<'*'>, that means that checks on
+lambda state are omitted too. Setting C<$STATE> to C<undef> is allowed though,
+and will match when the lambda state is also undefined (which it is by
+default).
+
+There can be stacked more than one C<intercept> handlers; if C<$CODEREF> is C<undef>,
+removes the last registered hook.
+
+Example:
+
+    my $q = lambda { ... tail { ... }};
+    $q-> intercept( tail => sub {
+	if ( stars are aligned right) {
+	    # pass
+            return this-> super(@_);
+	} else {
+	    return 'not right';
+	}
+    });
+
+See also C<state>, C<super>, and C<override>.
+
 =item override $PREDICATE [ $STATE ] $CODEREF
 
 Installs a C<$CODEREF> as a overriding hook for a predicate - C<tail>, C<read>,
 C<write>, etc, possibly with a named state.  Whenever a lambda calls one of
 these predicates, the hook will be called instead, that should be able to analyze
-the call and pass or deny it from the further processing. 
+the call, and allow or deny it the further processing. 
 
 C<$STATE>, if omitted, is equivalent to C<'*'>, that means that checks on lambda 
 state are omitted too. Setting C<$STATE> to C<undef> is allowed though, and will
@@ -1749,19 +1814,27 @@ Example:
 	}
     });
 
-See also C<state> and C<super>.
+See also C<state>, C<super>, and C<intercept>.
 
 =item super
 
-Analogous to native perl's C<SUPER>, but on the predicate level, this method is to
-be called from overridden predicates to call the original predicate.
+Analogous to native perl's C<SUPER>, but on the predicate level, this method is
+to be called from overridden or intercepted predicates to call the original
+predicate.
+
+There is a slight difference of the call syntax, depending on whether it is
+being called from C<override> or C<intercept> callbacks. The C<intercept>
+callback will call the previous callback right away, and therefore has chance
+to supply it with altered parameters. The C<override> callback will call only
+the predicate registration routine itself, not the callback, and therefore is
+called without parameters. See L<intercept> and L<override> for examples of use.
 
 =item state $STATE
 
 Helper function for explicit naming of predicate calls. The function stores
-C<$STATE> string on the current lambda, so that eventual C<override>, needing
-to override internal states of the lambda, will make use of the string to
-identify a particular state.
+C<$STATE> string on the current lambda, so that eventual C<intercept> and
+C<override>, needing to override internal states of the lambda, will make use
+of the string to identify a particular state.
 
 The rule of thumb is to use it when a lambda contains more than one predicate
 of a certain type; for example the code
@@ -1819,6 +1892,8 @@ line to the server, and destroyed.
   Lambda using AnyEvent     0.684 sec        7.031 sec
   Raw sockets using select  0.145 sec        4.141 sec
   POE using select          5.349 sec       14.887 sec
+
+See benchmarking code in F<eg/bench>.
 
 =back
 

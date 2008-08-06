@@ -47,3 +47,6 @@
 
 0.21 - 31 Jul 2008
 	smarter getline(), io() is alias to lambda()
+
+0.22 - 5 Aug 2008
+	add intercept()	
