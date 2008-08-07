@@ -1,4 +1,4 @@
-# $Id: Lambda.pm,v 1.56 2008/08/06 10:39:02 dk Exp $
+# $Id: Lambda.pm,v 1.62 2008/08/07 09:23:23 dk Exp $
 
 package IO::Lambda;
 
@@ -14,7 +14,7 @@ use vars qw(
 	$THIS @CONTEXT $METHOD $CALLBACK
 	$DEBUG
 );
-$VERSION     = '0.22';
+$VERSION     = '0.23';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -515,6 +515,7 @@ sub drive
 # do one quant
 sub yield
 {
+	my $nonblocking = shift;
 	my $more_events = 0;
 
 	# custom loops must not wait
@@ -527,7 +528,7 @@ sub yield
 
 	# main loop waits, if anything
 	unless ( $LOOP-> empty) {
-		$LOOP-> yield;
+		$LOOP-> yield( $nonblocking);
 		$more_events = 1;
 	}
 
@@ -720,6 +721,17 @@ sub add_tail
 	);
 }
 
+# convert constant @param into a lambda
+sub add_constant
+{
+	my ( $self, $cb, $method, @param) = @_;
+	$self-> add_tail ( 
+		$cb, $method,
+		lambda { @param },
+		@CONTEXT
+	);
+}
+
 # tail( $lambda, @param) -- initialize $lambda with @param, and wait for it
 sub tail(&)
 {
@@ -802,14 +814,14 @@ sub tailo(&)
 # sysread lambda wrapper
 #
 # ioresult    :: ($result, $error)
-# sysreader() :: ($fh, $buf, $offset, $deadline) -> ioresult
+# sysreader() :: ($fh, $buf, $length, $deadline) -> ioresult
 sub sysreader (){ lambda 
 {
 	my ( $fh, $buf, $length, $deadline) = @_;
 	$$buf = '' unless defined $$buf;
 
 	this-> watch_io( IO_READ, $fh, $deadline, sub {
-		return undef, 'timeout' unless shift;
+		return undef, 'timeout' unless $_[1];
 		my $n = sysread( $fh, $$buf, $length, length($$buf));
 		if ( $DEBUG) {
 			warn "fh(", fileno($fh), ") read ", ( defined($n) ? "$n bytes" : "error $!"), "\n";
@@ -828,7 +840,7 @@ sub syswriter (){ lambda
 	my ( $fh, $buf, $length, $offset, $deadline) = @_;
 
 	this-> watch_io( IO_WRITE, $fh, $deadline, sub {
-		return undef, 'timeout' unless shift;
+		return undef, 'timeout' unless $_[1];
 		my $n = syswrite( $fh, $$buf, $length, $offset);
 		if ( $DEBUG) {
 			warn "fh(", fileno($fh), ") wrote ", ( defined($n) ? "$n bytes" : "error $!"), "\n";
@@ -903,6 +915,8 @@ sub getline
 	my $reader = shift;
 	lambda {
 		my ( $fh, $buf, $deadline) = @_;
+		croak "getline() needs a buffer! ( f.ex getline,\$fh,\\(my \$buf='') )"
+			unless ref($buf);
 		context readbuf($reader), $fh, $buf, qr/^[^\n]*\n/, $deadline;
 	tail {
 		substr( $$buf, 0, length($_[0]), '') unless defined $_[1];
@@ -1029,7 +1043,7 @@ either read all from here - it begins with code examples, then with more code
 examples, then the explanation of basic concepts, and finally gets to the
 complex ones. Or, you may skip directly to the fun part (L<Stream IO>), where
 functional style mixes with I/O. Also note that C<io> and C<lambda> are synonyms - 
-I personally prefer C<lambda> but some find the word slighly inappropriate, hence
+I personally prefer C<lambda> but some find the word slightly inappropriate, hence
 C<io>.
 
 =head2 Read line by line from filehandle
@@ -1731,10 +1745,12 @@ are unordered.
 Waits for at least one lambda from list of caller lambda and C<@lambdas> to
 finish.  Returns list of finished objects.
 
-=item yield
+=item yield $nonblocking = 0
 
 Runs onle round of dispatching events. Returns 1 if there are more events
-in internal queues, 0 otherwise.
+in internal queues, 0 otherwise. If C<$NONBLOCKING> is set, exits as soon
+as possible, otherwise waits for events; this feature can be used for
+organizing event loops without C<wait/run> calls.
 
 =item run
 
@@ -1758,20 +1774,20 @@ then stops.
 Note that C<resolve> doesn't provide any means to call associated
 callbacks, which is intentional.
 
-=item intercept $PREDICATE [ $STATE ] $CODEREF
+=item intercept $predicate [ $state = '*' ] $coderef
 
-Installs a C<$CODEREF> as a overriding hook for a predicate callback, where
-predicate is C<tail>, C<read>, C<write>, etc.  Whenever a the predicate
-callback is being called, the hook will be called instead, that should be able
-to analyze the call, and allow or deny it the further processing. 
+Installs a C<$coderef> as a overriding hook for a predicate callback, where
+predicate is C<tail>, C<read>, C<write>, etc.  Whenever a predicate callback
+is being called, the C<$coderef> hook will be called instead, that should be able to
+analyze the call, and allow or deny it the further processing. 
 
-C<$STATE>, if omitted, is equivalent to C<'*'>, that means that checks on
-lambda state are omitted too. Setting C<$STATE> to C<undef> is allowed though,
+C<$state>, if omitted, is equivalent to C<'*'>, that means that checks on
+lambda state are omitted too. Setting C<$state> to C<undef> is allowed though,
 and will match when the lambda state is also undefined (which it is by
 default).
 
-There can be stacked more than one C<intercept> handlers; if C<$CODEREF> is C<undef>,
-removes the last registered hook.
+There can exist more than one C<intercept> handlers, stacked on top of each
+other. If C<$coderef> is C<undef>, the last registered hook is removed.
 
 Example:
 
@@ -1787,19 +1803,19 @@ Example:
 
 See also C<state>, C<super>, and C<override>.
 
-=item override $PREDICATE [ $STATE ] $CODEREF
+=item override $predicate [ $state = '*' ] $coderef
 
-Installs a C<$CODEREF> as a overriding hook for a predicate - C<tail>, C<read>,
+Installs a C<$coderef> as a overriding hook for a predicate - C<tail>, C<read>,
 C<write>, etc, possibly with a named state.  Whenever a lambda calls one of
-these predicates, the hook will be called instead, that should be able to analyze
-the call, and allow or deny it the further processing. 
+these predicates, the C<$coderef> hook will be called instead, that should be
+able to analyze the call, and allow or deny it the further processing. 
 
-C<$STATE>, if omitted, is equivalent to C<'*'>, that means that checks on lambda 
-state are omitted too. Setting C<$STATE> to C<undef> is allowed though, and will
+C<$state>, if omitted, is equivalent to C<'*'>, that means that checks on lambda 
+state are omitted too. Setting C<$state> to C<undef> is allowed though, and will
 match when the lambda state is also undefined (which it is by default).
 
-There can be stacked more than one C<override> handlers; if C<$CODEREF> is C<undef>,
-removes the last registered hook.
+There can exist more than one C<override> handlers, stacked on top of each
+other. If C<$coderef> is C<undef>, the last registered hook is removed.
 
 Example:
 
@@ -1820,24 +1836,25 @@ See also C<state>, C<super>, and C<intercept>.
 
 Analogous to native perl's C<SUPER>, but on the predicate level, this method is
 to be called from overridden or intercepted predicates to call the original
-predicate.
+predicate or callback.
 
-There is a slight difference of the call syntax, depending on whether it is
-being called from C<override> or C<intercept> callbacks. The C<intercept>
-callback will call the previous callback right away, and therefore has chance
-to supply it with altered parameters. The C<override> callback will call only
-the predicate registration routine itself, not the callback, and therefore is
-called without parameters. See L<intercept> and L<override> for examples of use.
+There is a slight difference in the call syntax, depending on whether it is
+being called from inside an C<override> or C<intercept> callback. The
+C<intercept>'ed callback will call the previous callback right away, and may
+call it with parameters directly. The C<override> callback will only call the
+predicate registration routine itself, not the callback, and therefore is
+called without parameters. See L<intercept> and L<override> for examples of
+use.
 
-=item state $STATE
+=item state $state
 
 Helper function for explicit naming of predicate calls. The function stores
-C<$STATE> string on the current lambda, so that eventual C<intercept> and
+C<$state> string on the current lambda, so that eventual C<intercept> and
 C<override>, needing to override internal states of the lambda, will make use
 of the string to identify a particular state.
 
-The rule of thumb is to use it when a lambda contains more than one predicate
-of a certain type; for example the code
+The recommended use of the method is when a lambda contains more than one
+predicate of a certain type; for example the code
 
    tail {
    tail {
@@ -1855,25 +1872,31 @@ is therefore better to be written as
 
 =head1 SEE ALSO
 
-L<Coro>, L<threads>, L<POE>.
-
-The package contains backends for other libraries that benefit from 
-asynchronous I/O, but may or may not list them as explicit dependency.
-If you need to use these, install these separately:
+Helper modules:
 
 =over
 
 =item *
 
-L<IO::Lambda::SNMP> requires L<SNMP>.
+L<IO::Lambda::Signal> - POSIX signals.
 
 =item *
 
-Lambda C<pid> in L<IO::Lambda::Signal> requires functioning C<POSIX::waitpid>.
+L<IO::Lambda::Socket> - lambda versions of C<connect>, C<accept> etc.
 
 =item *
 
-L<IO::Lambda::HTTP::Authen::NTLM> requires L<Authen::NTLM>.
+L<IO::Lambda::HTTP> - implementation of HTTP and HTTPS protocols.  HTTPS
+requires L<IO::Socket::SSL>, NTLM/Negotiate authentication requires
+L<Authem::NTLM> modules (not marked as dependencies).
+
+=item *
+
+L<IO::Lambda::DNS> - asynchronous domain name resolver.
+
+=item *
+
+L<IO::Lambda::SNMP> - SNMP requests lambda style. Requires L<SNMP>.
 
 =back
 
