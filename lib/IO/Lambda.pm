@@ -1,4 +1,4 @@
-# $Id: Lambda.pm,v 1.62 2008/08/07 09:23:23 dk Exp $
+# $Id: Lambda.pm,v 1.67 2008/08/08 07:47:24 dk Exp $
 
 package IO::Lambda;
 
@@ -14,7 +14,7 @@ use vars qw(
 	$THIS @CONTEXT $METHOD $CALLBACK
 	$DEBUG
 );
-$VERSION     = '0.23';
+$VERSION     = '0.24';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -618,6 +618,7 @@ sub again
 sub this         { @_ ? ($THIS, @CONTEXT) = @_ : $THIS }
 sub context      { @_ ? @CONTEXT = @_ : @CONTEXT }
 sub this_frame   { @_ ? ( $METHOD, $CALLBACK) = @_ : ( $METHOD, $CALLBACK) }
+sub set_frame    { ( $THIS, $METHOD, $CALLBACK, @CONTEXT) = @_ }
 
 sub state($)
 {
@@ -732,6 +733,28 @@ sub add_constant
 	);
 }
 
+# handle default predicate logic given a lambda
+sub predicate
+{
+	my ( $self, $cb, $method, $name) = @_;
+
+	return $THIS-> override_handler($name, $method, $cb)
+		if defined($name) and $THIS-> {override}->{$name};
+	
+	my @ctx = @CONTEXT;
+	$THIS-> watch_lambda( 
+		$self, 
+		$cb ? sub {
+			$THIS     = shift;
+			@CONTEXT  = @ctx;
+			$METHOD   = $method;
+			$CALLBACK = $cb;
+			$cb-> (@_);
+		} : undef
+	);
+}
+
+
 # tail( $lambda, @param) -- initialize $lambda with @param, and wait for it
 sub tail(&)
 {
@@ -795,7 +818,7 @@ sub tailo(&)
 		return if $n--;
 
 		@CONTEXT  = @lambdas;
-		$METHOD   = \&tails;
+		$METHOD   = \&tailo;
 		$CALLBACK = $cb;
 		@ret = map { @$_ } @ret;
 		$cb ? $cb-> (@ret) : @ret;
@@ -1535,6 +1558,18 @@ The outermost tail callback will be called twice: first time in the normal cours
 and second time as a result of the C<again> call. C<this_frame> and C<again> thus provide
 a kind of restartable continuations.
 
+=item predicate $lambda, $callback, $method, $name
+
+Helper function for predicate wrappers, to be called inside a
+predicate that waits for a lambda.
+
+Example: convert existing C<getline> constructor into a predicate:
+
+   sub gl(&) { getline-> predicate( shift, \&gl, 'gl') }
+   ...
+   context $fh, $buf, $deadline;
+   gl { ... }
+
 =back
 
 =head2 Stream IO
@@ -1548,13 +1583,14 @@ useful for C<sysread> and C<syswrite>; this section tells about higher-level
 lambdas that relate to these low-level ones, as the aforementioned C<readline>
 relates to C<sysread>.
 
-All functions in this section return the lambda, that does the actual work.  Not
-unlike as a class constructor returns a newly created class instance, these
-functions return newly created lambdas. Therefore, these functions are
+All functions in this section return the lambda, that does the actual work.
+Not unlike as a class constructor returns a newly created class instance, these
+functions return newly created lambdas. Such functions will be further referred
+as lambda constructors, or simply constructors. Therefore, constructors are
 documented here as having two inputs and one output, as for example a function
 C<sysreader> is a function that takes 0 parameters, always returns a new
 lambda, and this lambda, in turn, takes four parameters and returns two. This
-function will be described as
+constructor will be described as
 
     # sysreader() :: ($fh,$buf,$length,$deadline) -> ($result,$error)
 
