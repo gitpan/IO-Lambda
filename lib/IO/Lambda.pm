@@ -1,4 +1,4 @@
-# $Id: Lambda.pm,v 1.71 2008/08/15 14:51:00 dk Exp $
+# $Id: Lambda.pm,v 1.82 2008/09/25 11:20:16 dk Exp $
 
 package IO::Lambda;
 
@@ -14,7 +14,7 @@ use vars qw(
 	$THIS @CONTEXT $METHOD $CALLBACK
 	$DEBUG
 );
-$VERSION     = '0.27';
+$VERSION     = '0.28';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -37,17 +37,19 @@ $VERSION     = '0.27';
 );
 $DEBUG = $ENV{IO_LAMBDA_DEBUG};
 
-use constant IO_READ              => 4;
-use constant IO_WRITE             => 2;
-use constant IO_EXCEPTION         => 1;
-
-use constant WATCH_OBJ            => 0;
-use constant WATCH_DEADLINE       => 1;
-use constant WATCH_LAMBDA         => 1;
-use constant WATCH_CALLBACK       => 2;
-
-use constant WATCH_IO_HANDLE      => 3;
-use constant WATCH_IO_FLAGS       => 4;
+use constant {
+	IO_READ              => 4,
+	IO_WRITE             => 2,
+	IO_EXCEPTION         => 1,
+	
+	WATCH_OBJ            => 0,
+	WATCH_DEADLINE       => 1,
+	WATCH_LAMBDA         => 1,
+	WATCH_CALLBACK       => 2,
+	
+	WATCH_IO_HANDLE      => 3,
+	WATCH_IO_FLAGS       => 4,
+};
 
 sub new
 {
@@ -603,6 +605,7 @@ sub lambda(&)
 	my $l   = __PACKAGE__-> new( sub {
 		# initial lambda code is usually executed by tail/tails inside another lambda,
 		# so protect the upper-level context
+		local *__ANON__ = "IO::Lambda::lambda::callback";
 		local $THIS     = shift;
 		local @CONTEXT  = ();
 		local $CALLBACK = $cb;
@@ -644,9 +647,11 @@ sub state($)
 sub add_watch
 {
 	my ($self, $cb, $method, $flags, $handle, $deadline, @ctx) = @_;
+	my $who = (caller(1))[3];
 	$self-> watch_io(
 		$flags, $handle, $deadline,
 		sub {
+			local *__ANON__ = "$who\:\:callback";
 			$THIS     = shift;
 			@CONTEXT  = @ctx;
 			$METHOD   = $method;
@@ -696,9 +701,11 @@ sub write(&)
 sub add_timer
 {
 	my ($self, $cb, $method, $deadline, @ctx) = @_;
+	my $who = (caller(1))[3];
 	$self-> watch_timer(
 		$deadline,
 		sub {
+			local *__ANON__ = "$who\:\:callback";
 			$THIS     = shift;
 			@CONTEXT  = @ctx;
 			$METHOD   = $method;
@@ -720,9 +727,11 @@ sub sleep(&)
 sub add_tail
 {
 	my ($self, $cb, $method, $lambda, @ctx) = @_;
+	my $who = (caller(1))[3];
 	$self-> watch_lambda(
 		$lambda,
 		$cb ? sub {
+			local *__ANON__ = "$who\:\:callback";
 			$THIS     = shift;
 			@CONTEXT  = @ctx;
 			$METHOD   = $method;
@@ -752,9 +761,11 @@ sub predicate
 		if defined($name) and $THIS-> {override}->{$name};
 	
 	my @ctx = @CONTEXT;
+	my $who = defined($name) ? $name : (caller(1))[3];
 	$THIS-> watch_lambda( 
 		$self, 
 		$cb ? sub {
+			local *__ANON__ = "$who\:\:callback";
 			$THIS     = shift;
 			@CONTEXT  = @ctx;
 			$METHOD   = $method;
@@ -795,6 +806,7 @@ sub tails(&)
 		push @ret, @_;
 		return if $n--;
 
+		local *__ANON__ = "IO::Lambda::tails::callback";
 		@CONTEXT  = @lambdas;
 		$METHOD   = \&tails;
 		$CALLBACK = $cb;
@@ -813,20 +825,17 @@ sub tailo(&)
 	my $cb = $_[0];
 	my @lambdas = context;
 	my $n = $#lambdas;
-	my $i = 0;
-	my %n;
-	$n{"$_"} = $i++ for @lambdas;
 	croak "no tails" unless @lambdas;
-	croak "won't wait for same lambda more than once" unless @lambdas == $i;
 
 	my @ret;
 	my $watcher;
 	$watcher = sub {
 		my $curr  = shift;
 		$THIS     = shift;
-		$ret[ $n{"$curr"} ] = \@_;
+		$ret[ $curr ] = \@_;
 		return if $n--;
 
+		local *__ANON__ = "IO::Lambda::tailo::callback";
 		@CONTEXT  = @lambdas;
 		$METHOD   = \&tailo;
 		$CALLBACK = $cb;
@@ -834,8 +843,12 @@ sub tailo(&)
 		$cb ? $cb-> (@ret) : @ret;
 	};
 	my $this = $THIS;
-	for my $l ( @lambdas) {
-		$this-> watch_lambda( $l, sub { $watcher->($l, @_) });
+	for ( my $i = 0; $i < @lambdas; $i++) {
+		my $d = $i;
+		$this-> watch_lambda(
+			$lambdas[$i], 
+			sub { $watcher->($d, @_) }
+		);
 	};
 }
 
@@ -855,6 +868,7 @@ sub any_tail(&)
 	my $timer = $this-> watch_timer( $deadline, sub {
 		$THIS     = shift;
 		$THIS-> cancel_event($_) for @watchers;
+		local *__ANON__ = "IO::Lambda::any_tails::callback";
 		@CONTEXT  = @lambdas;
 		$METHOD   = \&any_tail;
 		$CALLBACK = $cb;
@@ -869,6 +883,7 @@ sub any_tail(&)
 		
 		$THIS-> cancel_event( $timer);
 
+		local *__ANON__ = "IO::Lambda::any_tails::callback";
 		@CONTEXT  = @lambdas;
 		$METHOD   = \&any_tail;
 		$CALLBACK = $cb;
@@ -1129,7 +1144,7 @@ constructs a lambda that reads single line from a filehandle.
     sub my_reader
     {
        my $filehandle = shift;
-       io {
+       lambda {
            context getline, $filehandle, \(my $buf = '');
        tail {
            my ( $string, $error) = @_;
@@ -1458,7 +1473,7 @@ will simply be less precise, and will jitter plus-minus half a second.
 =head2 Predicates
 
 All predicates receive their parameters from the context stack, or simply the
-context. The only parameter passed to them by using perl call, is a callback
+context. The only parameter passed to them by using perl call, is the callback
 itself.  Predicates can also be called without a callback, in which case, they
 will pass further data that otherwise would be passed as C<@_> to the
 callback. Thus, a predicate can be called either as
@@ -1532,7 +1547,7 @@ Same as C<tails>, but the results are ordered.
 
 =item any_tail($deadline,@lambdas)
 
-Executes wither when all objects in C<@lambdas> are finished, or C<$deadline>
+Executes either when all objects in C<@lambdas> are finished, or C<$deadline>
 expires. Returns lambdas that were successfully executed during the allotted
 time.
 
@@ -1609,14 +1624,14 @@ Example:
 	}
     }
 
-The outermost tail callback will be called twice: first time in the normal course of event,
+The outermost tail callback will be called twice: first time in the normal course of events,
 and second time as a result of the C<again> call. C<this_frame> and C<again> thus provide
 a kind of restartable continuations.
 
 =item predicate $lambda, $callback, $method, $name
 
 Helper function for creating predicates, either from lambdas 
-or from lambda constrictors.
+or from lambda constructors.
 
 Example: convert existing C<getline> constructor into a predicate:
 
@@ -1838,7 +1853,7 @@ finish.  Returns list of finished objects.
 
 =item yield $nonblocking = 0
 
-Runs onle round of dispatching events. Returns 1 if there are more events
+Runs one round of dispatching events. Returns 1 if there are more events
 in internal queues, 0 otherwise. If C<$NONBLOCKING> is set, exits as soon
 as possible, otherwise waits for events; this feature can be used for
 organizing event loops without C<wait/run> calls.
@@ -1867,7 +1882,7 @@ callbacks, which is intentional.
 
 =item intercept $predicate [ $state = '*' ] $coderef
 
-Installs a C<$coderef> as a overriding hook for a predicate callback, where
+Installs a C<$coderef> as an overriding hook for a predicate callback, where
 predicate is C<tail>, C<read>, C<write>, etc.  Whenever a predicate callback
 is being called, the C<$coderef> hook will be called instead, that should be able to
 analyze the call, and allow or deny it the further processing. 
@@ -1896,7 +1911,7 @@ See also C<state>, C<super>, and C<override>.
 
 =item override $predicate [ $state = '*' ] $coderef
 
-Installs a C<$coderef> as a overriding hook for a predicate - C<tail>, C<read>,
+Installs a C<$coderef> as an overriding hook for a predicate - C<tail>, C<read>,
 C<write>, etc, possibly with a named state.  Whenever a lambda calls one of
 these predicates, the C<$coderef> hook will be called instead, that should be
 able to analyze the call, and allow or deny it the further processing. 
