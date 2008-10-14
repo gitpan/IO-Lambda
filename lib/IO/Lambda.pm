@@ -1,4 +1,4 @@
-# $Id: Lambda.pm,v 1.82 2008/09/25 11:20:16 dk Exp $
+# $Id: Lambda.pm,v 1.84 2008/10/14 13:15:04 dk Exp $
 
 package IO::Lambda;
 
@@ -6,15 +6,16 @@ use Carp;
 use strict;
 use warnings;
 use Exporter;
+use Sub::Name;
 use Time::HiRes qw(time);
 use vars qw(
 	$LOOP %EVENTS @LOOPS
 	$VERSION @ISA
-	@EXPORT_OK %EXPORT_TAGS @EXPORT_CONSTANTS @EXPORT_LAMBDA @EXPORT_STREAM
-	$THIS @CONTEXT $METHOD $CALLBACK
+	@EXPORT_OK %EXPORT_TAGS @EXPORT_CONSTANTS @EXPORT_LAMBDA @EXPORT_STREAM @EXPORT_DEV
+	$THIS @CONTEXT $METHOD $CALLBACK $AGAIN
 	$DEBUG
 );
-$VERSION     = '0.28';
+$VERSION     = '0.29';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -28,11 +29,15 @@ $VERSION     = '0.28';
 	this context lambda this_frame again state
 	io read write readwrite sleep tail tails tailo any_tail
 );
-@EXPORT_OK   = (@EXPORT_LAMBDA, @EXPORT_CONSTANTS, @EXPORT_STREAM);
+@EXPORT_DEV    = qw(
+	_subname
+);
+@EXPORT_OK   = (@EXPORT_LAMBDA, @EXPORT_CONSTANTS, @EXPORT_STREAM, @EXPORT_DEV);
 %EXPORT_TAGS = (
 	lambda    => \@EXPORT_LAMBDA, 
 	stream    => \@EXPORT_STREAM, 
 	constants => \@EXPORT_CONSTANTS,
+	dev       => \@EXPORT_DEV,
 	all       => \@EXPORT_OK,
 );
 $DEBUG = $ENV{IO_LAMBDA_DEBUG};
@@ -275,6 +280,8 @@ sub intercept
 	my ( $self, $method, $state, $cb) = ( 4 == @_) ? @_ : (@_[0,1],'*',$_[2]);
 		
 	return $self-> override( $method, $state, undef) unless $cb;
+
+	_subname("intercept($method:$state)" => $cb);
 
 	$self-> {override}->{$method} ||= [];
 	unshift @{$self-> {override}->{$method}}, [ $state, sub {
@@ -601,7 +608,7 @@ sub run { do {} while yield }
 sub _lambda_restart { die "lambda() is not restartable" }
 sub lambda(&)
 {
-	my $cb  = $_[0];
+	my $cb  = _subname(lambda => $_[0]);
 	my $l   = __PACKAGE__-> new( sub {
 		# initial lambda code is usually executed by tail/tails inside another lambda,
 		# so protect the upper-level context
@@ -616,14 +623,24 @@ sub lambda(&)
 	$l;
 }
 
+sub _subname
+{
+	subname(
+		caller(1 + ($_[2] || 0)) .  '::_'.  $_[0], 
+		$_[1]
+	) if $_[1] and not $AGAIN; 
+	return $_[1];
+}
+
 *io = \&lambda;
 
 # re-enter the latest (or other) frame
 sub again
 {
 	( $METHOD, $CALLBACK) = @_ if 2 == @_;
+	local $AGAIN = 1;
 	defined($METHOD) ? 
-		$METHOD-> ( $CALLBACK) : 
+		$METHOD-> ($CALLBACK) : 
 		croak "again predicate outside of a restartable call" 
 }
 
@@ -638,6 +655,7 @@ sub state($)
 	my $this = ($_[0] && ref($_[0])) ? shift(@_) : this;
 	@_ ? $this-> {state} = $_[0] : return $this-> {state};
 }
+
 
 #
 # Predicates:
@@ -668,7 +686,7 @@ sub readwrite(&)
 		if $THIS-> {override}->{readwrite};
 
 	$THIS-> add_watch( 
-		shift, \&readwrite,
+		_subname(readwrite => shift), \&readwrite,
 		@CONTEXT[0,1,2,0,1,2]
 	)
 }
@@ -680,7 +698,7 @@ sub read(&)
 		if $THIS-> {override}->{read};
 
 	$THIS-> add_watch( 
-		shift, \&read, IO_READ, 
+		_subname(read => shift), \&read, IO_READ, 
 		@CONTEXT[0,1,0,1]
 	)
 }
@@ -692,7 +710,7 @@ sub write(&)
 		if $THIS-> {override}->{write};
 	
 	$THIS-> add_watch( 
-		shift, \&write, IO_WRITE, 
+		_subname(write => shift), \&write, IO_WRITE, 
 		@CONTEXT[0,1,0,1]
 	)
 }
@@ -720,7 +738,7 @@ sub sleep(&)
 {
 	return $THIS-> override_handler('sleep', \&sleep, shift)
 		if $THIS-> {override}->{sleep};
-	$THIS-> add_timer( shift, \&sleep, @CONTEXT[0,0])
+	$THIS-> add_timer( _subname(sleep => shift), \&sleep, @CONTEXT[0,0])
 }
 
 # common wrapper for declaration of single lambda-watching user predicates
@@ -746,7 +764,7 @@ sub add_constant
 {
 	my ( $self, $cb, $method, @param) = @_;
 	$self-> add_tail ( 
-		$cb, $method,
+		_subname(constant => $cb), $method,
 		lambda { @param },
 		@CONTEXT
 	);
@@ -762,6 +780,7 @@ sub predicate
 	
 	my @ctx = @CONTEXT;
 	my $who = defined($name) ? $name : (caller(1))[3];
+	_subname($who, $cb, 2) if $cb and not $AGAIN;
 	$THIS-> watch_lambda( 
 		$self, 
 		$cb ? sub {
@@ -785,7 +804,7 @@ sub tail(&)
 	my ( $lambda, @param) = context;
 	$lambda-> reset if $lambda-> is_stopped;
 	$lambda-> call( @param);
-	$THIS-> add_tail( shift, \&tail, $lambda, $lambda, @param);
+	$THIS-> add_tail( _subname(tail => shift), \&tail, $lambda, $lambda, @param);
 }
 
 # tails(@lambdas) -- wait for all lambdas to finish
@@ -794,7 +813,7 @@ sub tails(&)
 	return $THIS-> override_handler('tails', \&tails, shift)
 		if $THIS-> {override}->{tails};
 	
-	my $cb = $_[0];
+	my $cb = _subname tails => $_[0];
 	my @lambdas = context;
 	my $n = $#lambdas;
 	croak "no tails" unless @lambdas;
@@ -822,7 +841,7 @@ sub tailo(&)
 	return $THIS-> override_handler('tailo', \&tailo, shift)
 		if $THIS-> {override}->{tailo};
 	
-	my $cb = $_[0];
+	my $cb = _subname tailo => $_[0];
 	my @lambdas = context;
 	my $n = $#lambdas;
 	croak "no tails" unless @lambdas;
@@ -858,7 +877,7 @@ sub any_tail(&)
 	return $THIS-> override_handler('any_tail', \&any_tail, shift)
 		if $THIS-> {override}->{any_tail};
 	
-	my $cb = $_[0];
+	my $cb = _subname any_tail => $_[0];
 	my ( $deadline, @lambdas) = context;
 	my $n = $#lambdas;
 	croak "no tails" unless @lambdas;
@@ -907,7 +926,7 @@ sub sysreader (){ lambda
 	my ( $fh, $buf, $length, $deadline) = @_;
 	$$buf = '' unless defined $$buf;
 
-	this-> watch_io( IO_READ, $fh, $deadline, sub {
+	this-> watch_io( IO_READ, $fh, $deadline, subname _sysreader => sub {
 		return undef, 'timeout' unless $_[1];
 		my $n = sysread( $fh, $$buf, $length, length($$buf));
 		if ( $DEBUG) {
@@ -926,7 +945,7 @@ sub syswriter (){ lambda
 {
 	my ( $fh, $buf, $length, $offset, $deadline) = @_;
 
-	this-> watch_io( IO_WRITE, $fh, $deadline, sub {
+	this-> watch_io( IO_WRITE, $fh, $deadline, subname _syswriter => sub {
 		return undef, 'timeout' unless $_[1];
 		my $n = syswrite( $fh, $$buf, $length, $offset);
 		if ( $DEBUG) {
@@ -1114,30 +1133,73 @@ __DATA__
 
 IO::Lambda - non-blocking I/O in lambda style
 
+=head1 SYNOPSIS
+
+   use strict;
+   use IO::Lambda qw(:lambda);
+   use IO::Socket::INET;
+
+   # create a lambda object
+   sub http
+   {
+      my ( $host, $url) = @_;
+
+      my $socket = IO::Socket::INET-> new( 
+         PeerAddr => $host, 
+         PeerPort => 80 
+      );
+
+      lambda {
+         context $socket;
+      write {
+         print $socket "GET $url HTTP/1.0\r\n\r\n";
+         my $buf = '';
+      read {
+         return $buf unless 
+            sysread( $socket, $buf, 1024, length($buf));
+         again;
+      }}}
+   }
+
+   # fire up lambda and wait until it completes
+   print http( 'www.perl.com', '/')-> wait;
+
+   # fire up a lambda that waits for two http requests in parallel
+   lambda {
+      context
+         http( 'www.perl.com', '/'),
+         http( 'www.google.com', '/');
+      tails {
+         print @_;
+      }
+   }-> wait;
+
+Note: C<io> and C<lambda> are synonyms - I personally prefer C<lambda> but some
+find the word slightly inappropriate, hence C<io>.
+
 =head1 DESCRIPTION
 
 This module is another attempt to fight the horrors of non-blocking I/O
-programming. The simplicity of the sequential programming is only available
-when one employs threads, coroutines, or co-processes. Otherwise state machines
-are to be built, often quite complex, which fact doesn't help the clarity of
-the code. This module uses closures to approximate the sequential
-programming with single-process, single-thread, non-blocking I/O.
+programming. It tries to bring back the simplicity of the declarative
+programming style, that is only otherwise available when one employs threads,
+coroutines, or co-processes.  Usually coding non-blocking I/O for single
+process, single thread programs requires construction of state machines, often
+fairly complex, which doesn't help the clarity of the code. Not unlike monads
+in functional languages, that enforce order of execution over generally
+orderless functions, this framework helps programmer to express the order of
+execution of I/O callbacks in a coding style that resembles sequential,
+declarative programming.
 
-=head1 SYNOPSIS
+The manual begins with code examples, then explains basic assumptions, then
+finally gets of the complex concepts, where the real fun begins. You may skip
+directly there (L<Stream IO>), where functional style mixes with I/O. 
 
-This is a fairly large document, so depending on your reading tastes, you may
-either read all from here - it begins with code examples, then with more code
-examples, then the explanation of basic concepts, and finally gets to the
-complex ones. Or, you may skip directly to the fun part (L<Stream IO>), where
-functional style mixes with I/O. Also note that C<io> and C<lambda> are synonyms - 
-I personally prefer C<lambda> but some find the word slightly inappropriate, hence
-C<io>.
+=head2 Reading lines from a filehandle
 
-=head2 Read line by line from filehandle
-
-Given C<$filehandle> is non-blocking, the following code creates a lambda than
-reads from it util EOF or error occured. Here, C<getline> (see L<Stream IO> below) 
-constructs a lambda that reads single line from a filehandle.
+Given C<$filehandle> is non-blocking, the following code creates a lambda
+object (later, simply a I<lambda>) that reads from the handle until EOF or an
+error occured. Here, C<getline> (see L<Stream IO> below) constructs a lambda
+that reads a single line from a filehandle.
 
     use IO::Lambda qw(:all);
 
@@ -1172,9 +1234,9 @@ two readers:
 
     my_reader_all( $socket1, $socket2)-> wait;
 
-=head2 Non-blocking HTTP
+=head2 Non-blocking HTTP client
 
-Given a socket, create a lambda that implements http protocol
+Given a socket, create a lambda that implements the HTTP protocol
 
     use IO::Lambda qw(:all);
     use IO::Socket;
@@ -1284,14 +1346,14 @@ talk_redirect() will have exactly the same properties as talk() does
 
     print get_parallel('www.perl.com', 'www.google.com')-> wait;
 
-See tests and examples in directory C<eg/> for more.
+See tests and additional examples in directory C<eg/> for more information.
 
 =head1 API
 
 =head2 Events and states
 
 A lambda is an C<IO::Lambda> object, that waits for IO and timeout events, and
-for events generated when other lambdas are finished. On each such event a
+for events generated when other lambdas are completed. On each such event a
 callback is executed. The result of the execution is saved, and passed on to the
 next callback, when the next event arrives.
 
@@ -1305,12 +1367,12 @@ lambda will be executed:
     $q-> wait; # <- here will
 
 Lambdas are usually not started explicitly; the function that waits for a
-lambda, also starts it. C<wait>, the synchronous waiter, and C<tail>/C<tails>, the
-asynchronous ones, start passive lambdas when called. Lambda is finished when
-there are no more events to listen to. The example lambda above will finish
-right after C<print> statement.
+lambda, also starts it. C<wait>, the synchronous waiter, and C<tail>/C<tails>,
+the asynchronous ones, start passive lambdas when called. Lambda is I<finished>
+when there are no more events to listen to. The example lambda above will
+finish right after C<print> statement.
 
-Lambda can listen to events by calling predicates, that internally subscribe
+Lambda can listen to events by calling I<predicates>, that internally subscribe
 the lambda object to corresponding file handles, timers, and other lambdas.
 There are only those three types of events that basically constitute everything
 needed for building a state machine driven by external events, in particular,
@@ -1385,16 +1447,16 @@ which means that explicitly setting C<this> will always clear the context.
 
 =head2 Data and execution flow
 
-A lambda is initially called with arguments passed from outside. These arguments
-can be stored using C<call> method; C<wait> and C<tail> also issue C<call>
-internally, thus replacing any previous data stored by C<call>. Inside the
-lambda these arguments are available as C<@_>.
+A lambda is initially called with arguments passed from outside. These
+arguments can be stored using the C<call> method; C<wait> and C<tail> also
+issue C<call> internally, thus replacing any previous data stored by C<call>.
+Inside the lambda these arguments are available as C<@_>.
 
 Whatever is returned by a predicate callback (including C<lambda> predicate),
-will be passed as C<@_> to the next callback, or to the outside, if the lambda is
-finished. The result of a finished lambda is available by C<peek> method, that
-returns either all array of data available in the array context, or first item
-in the array otherwise. C<wait> returns the same data as C<peek> does.
+will be passed as C<@_> to the next callback, or to the outside, if the lambda
+is finished. The result of a finished lambda is available by C<peek> method,
+that returns either all array of data available in the array context, or first
+item in the array otherwise. C<wait> returns the same data as C<peek> does.
 
 When more than one lambda watches for another lambda, the latter will get its
 last callback results passed to all the watchers. However, when a lambda
@@ -1437,8 +1499,8 @@ many bytes from a socket within 5 seconds:
        }
    };
 
-Rewriting the same code with C<read> semantics that accepts time as timeout instead, 
-would be not that elegant:
+Rewriting the same code with C<read> semantics that accepts time as timeout
+instead, would be not that elegant:
 
    lambda {
        my $buf = '';
@@ -1745,7 +1807,7 @@ is read.
 This section lists methods of C<IO::Lambda> class. Note that by design all
 lambda-style functionality is also available for object-style programming.
 Together with the fact that lambda syntax is not exported by default, it thus
-leaves a place for possible implementations of independent syntaxes, either
+leaves a place for possible implementations of user-defined syntax, either
 with or without lambdas, on top of the object API, without accessing the
 internals.
 
@@ -1940,9 +2002,9 @@ See also C<state>, C<super>, and C<intercept>.
 
 =item super
 
-Analogous to native perl's C<SUPER>, but on the predicate level, this method is
-to be called from overridden or intercepted predicates to call the original
-predicate or callback.
+Analogous to Perl's C<SUPER>, but on the predicate level, this method is
+designed to be called from overridden predicates to call the original predicate
+or callback.
 
 There is a slight difference in the call syntax, depending on whether it is
 being called from inside an C<override> or C<intercept> callback. The
@@ -1954,10 +2016,9 @@ use.
 
 =item state $state
 
-Helper function for explicit naming of predicate calls. The function stores
-C<$state> string on the current lambda, so that eventual C<intercept> and
-C<override>, needing to override internal states of the lambda, will make use
-of the string to identify a particular state.
+A helper function for explicit naming of predicate calls. The function stores
+the C<$state> string on the current lambda; this string can be used in calls
+to C<intercept> and C<override> to identify a particular predicate or a callback.
 
 The recommended use of the method is when a lambda contains more than one
 predicate of a certain type; for example the code
@@ -2012,7 +2073,7 @@ L<IO::Lambda::SNMP> - SNMP requests lambda style. Requires L<SNMP>.
 
 =item *
 
-Single-process tcp client and server; server echoes back everything is sent by
+A single-process TCP client and server; server echoes back everything is sent by
 the client. 500 connections sequentially created, instructed to send a single
 line to the server, and destroyed.
 
