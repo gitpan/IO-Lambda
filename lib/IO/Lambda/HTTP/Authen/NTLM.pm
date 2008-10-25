@@ -1,4 +1,4 @@
-# $Id: NTLM.pm,v 1.5 2008/07/02 09:25:51 dk Exp $
+# $Id: NTLM.pm,v 1.7 2008/10/18 08:41:45 dk Exp $
 
 package IO::Lambda::HTTP::Authen::NTLM;
 
@@ -13,7 +13,6 @@ sub authenticate
 
 	lambda {
 		# issue req phase 1
-		my $tried_phase1;
 		my $method = ($class =~ /:(\w+)$/)[0];
 		
 		my $ntlm = Authen::NTLM-> new(
@@ -33,7 +32,7 @@ sub authenticate
 		my $answer = shift;
 		return $answer unless ref($answer);
 
-                return $answer if $tried_phase1 or $answer-> code != 401;
+                return $answer if $answer-> code != 401;
 		my $challenge = $answer-> header('WWW-Authenticate') || '';
 		return $answer unless $challenge =~ s/^$method //;
 
@@ -41,10 +40,8 @@ sub authenticate
 		my $r = $req-> clone;
         	$r-> header('Authorization' => "$method ". $ntlm-> challenge($challenge));
 
-		ntlm_reset;
-		$tried_phase1++;
 		context $self-> handle_connection( $r);
-                return again;
+		&tail;
 	}}
 }
 
@@ -64,8 +61,6 @@ IO::Lambda::HTTP::Authen::NTLM - Library for enabling NTLM authentication (Micro
 	use IO::Lambda::HTTP;
 	
 	my $req = HTTP::Request-> new( GET => "http://company.com/protected.html" );
-	$req-> protocol('HTTP/1.1');
-	$req-> headers-> header( Host => $req-> uri-> host);
 	
 	my $r = IO::Lambda::HTTP-> new(
 		$req,
