@@ -1,11 +1,11 @@
 --- #YAML:1.0
 name:                IO-Lambda
-version:             0.31
+version:             0.32
 abstract:            non-blocking I/O in lambda style
 license:             ~
 author:              
     - Dmitry Karasik <dmitry@karasik.eu.org>
-generated_by:        ExtUtils::MakeMaker version 6.42_01
+generated_by:        ExtUtils::MakeMaker version 6.42
 distribution_type:   module
 requires:     
     LWP:                           0
