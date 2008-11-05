@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:                IO-Lambda
-version:             0.34
+version:             0.35
 abstract:            non-blocking I/O in lambda style
 license:             ~
 author:              
@@ -11,6 +11,7 @@ requires:
     LWP:                           0
     Net::DNS:                      0
     Scalar::Util:                  0
+    Storable:                      0
     Sub::Name:                     0
     URI:                           0
 meta-spec:

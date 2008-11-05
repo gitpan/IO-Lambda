@@ -1,61 +1,112 @@
-# $Id: Thread.pm,v 1.2 2008/11/01 19:50:20 dk Exp $
+# $Id: Thread.pm,v 1.12 2008/11/05 20:43:03 dk Exp $
 package IO::Lambda::Thread;
 use base qw(IO::Lambda);
-
-our $DEBUG = $ENV{IO_THREAD_DEBUG};
-	
 use strict;
 use warnings;
-use threads;
 use Exporter;
 use Socket;
 use IO::Handle;
 use IO::Lambda qw(:all :dev);
 
+our $DISABLED;
+eval { require threads; };
+$DISABLED = ( $@ =~ /^(.*?)\n/ ? $1 : $@) if $@;
+
+our $DEBUG = $IO::Lambda::DEBUG{thread};
+
 our @EXPORT_OK = qw(threaded);
 
-sub _t   { "threaded(" . _obj($_[0]) . ")" }
-sub _obj { $_[0] =~ /0x([\w]+)/; $1 }
+sub _d { "threaded(" . _o($_[0]) . ")" }
 
 sub new
 {
-	my ( $class, $cb) = @_;
-			
-	$class-> SUPER::new( sub {
-		my $self = shift;
-		$self-> {thread_self} = threads-> tid;
+	my ( $class, $cb, @param) = @_;
+	my $self = $class-> SUPER::new(\&init);
+	$self-> autorestart(0);
+	$self-> {thread_code}  = $cb;
+	$self-> {thread_param} = \@param;
+	return $self;
+}
 
-		my $r = IO::Handle-> new;
-		my $w = IO::Handle-> new;
-		socketpair( $r, $w, AF_UNIX, SOCK_STREAM, PF_UNSPEC);
+sub thread_init
+{
+	my ( $self, $r, $cb, @param) = @_;
 
-		my $self_id;
-		$self_id = "$self" if $DEBUG;
+	$SIG{KILL} = sub { threads-> exit(0) };
+	$SIG{PIPE} = 'IGNORE';
+	warn _d($self), ": thread(", threads->tid, ") started\n" if $DEBUG;
 
-		my ($t) = threads-> create( sub {
-			$SIG{KILL} = sub { threads-> exit(0) };
-			warn _t($self_id), ": thr started\n" if $DEBUG;
-			my @ret = $cb ? $cb->() : ();
-			warn _t($self_id), ": thr ended: [@ret]\n" if $DEBUG;
-			syswrite( $r, "0");
-			return @ret;
-		});
-		
-		warn _t($self), ": new thread(", _obj($t), ")\n" if $DEBUG;
-	
-		my $rec = $self-> watch_io( IO_READ, $w, undef, sub {
-			my $self = $_[0];
-			$self-> {thread_id} = undef;
-			warn _t($self), " joining ", _obj($t), "...\n" if $DEBUG;
-			my @ret = $t-> join;
-			close($r);
-			close($w);
-			warn _t($self), " done: ", _obj($t), " > [@ret]\n" if $DEBUG;
-			return @ret;
-		});
+	my @ret;
+	eval { @ret = $cb->($r, @param) if $cb };
 
-		$self-> {thread_id} = $t;
-	});
+	warn _d($self), ": thread(", threads->tid, ") ended: [@ret]\n" if $DEBUG;
+	close($r);
+	die $@ if $@;
+
+	return @ret;
+}
+
+sub init
+{
+	return $DISABLED if defined $DISABLED;
+
+	my $self = shift;
+
+	$self-> {thread_self} = threads-> tid;
+
+	my $r = IO::Handle-> new;
+	$self-> {handle} = IO::Handle-> new;
+	socketpair( $r, $self-> {handle}, AF_UNIX, SOCK_STREAM, PF_UNSPEC);
+	$self-> {handle}-> blocking(0);
+
+	($self-> {thread_id}) = threads-> create(
+		\&thread_init, 
+		"$self", $r, $self-> {thread_code},
+		@{ $self-> {thread_param} },
+	);
+	close($r);
+	undef $self-> {thread_code};
+	undef $self-> {thread_param};
+
+	warn _d($self), ": new thread(", $self-> {thread_id}->tid, ")\n" if $DEBUG;
+	$self-> join_on_read(1);
+}
+
+sub on_read
+{
+	my $self = shift;
+	warn _d($self), ": am closing on read\n" if $DEBUG;
+	$self-> {join_on_read} = undef;
+	return $self-> join;
+}
+
+sub join_on_read
+{
+	my ( $self, $join_on_read) = @_;
+	if ( $join_on_read) {
+		return if $self-> {join_on_read};
+	 	my $error = unpack('i', getsockopt( $self-> {handle}, SOL_SOCKET, SO_ERROR));
+		if ( $error) {
+			warn _d($self), ": join_on_read aborted, handle is invalid\n" if $DEBUG;
+			$self-> join;
+			return;
+		}
+		if ( $self-> is_stopped) {
+			warn _d($self), ": join_on_read aborted, lambda already stopped\n" if $DEBUG;
+			$self-> join;
+			return;
+		}
+		$self-> {join_on_read} = $self-> watch_io(
+			IO_READ, $self-> {handle}, 
+			undef, \&on_read
+		);
+		warn _d($self), ": will join on read\n" if $DEBUG;
+	} else {
+		return unless $self-> {join_on_read};
+		$self-> cancel_event( $self-> {join_on_read} );
+		$self-> {join_on_read} = undef;
+		warn _d($self), ": won't join on read\n" if $DEBUG;
+	}
 }
 
 my $__warned = 0;
@@ -67,7 +118,7 @@ sub kill
 		$self-> {thread_self} == threads-> tid;
 
 	my $t = $self-> {thread_id};
-	warn _t($self), ": kill(", _obj($t), ")\n" if $DEBUG;
+	warn _d($self), ": kill(", $t->tid, ")\n" if $DEBUG;
 	undef $self-> {thread_id};
 
 	if ( $] < 5.010) {
@@ -85,7 +136,9 @@ WARN
 		$t-> detach;
 		$t-> kill('KILL');
 	} else {
+		warn _d($self), " joining ", $t-> tid, "...\n" if $DEBUG;
 		$t-> join if $t-> is_joinable;
+		warn _d($self), " done ", $t-> tid, "\n" if $DEBUG;
 	}
 }
 
@@ -95,10 +148,17 @@ sub join
 	my $t;
 	return unless $t = $self-> {thread_id};
 	undef $self-> {thread_id};
-	$t-> join;
+	close($self-> {handle}) if $self-> {handle};
+	$self-> {handle} = undef;
+	warn _d($self), " joining thread ", $t-> tid, "...\n" if $DEBUG;
+	my @r = $t-> join;
+	@r = $t-> error if $] >= 5.010 and $t-> error;
+	warn _d($self), " thread ", $t-> tid, " joined ok\n" if $DEBUG;
+	return @r;
 }
 
 sub thread { $_[0]-> {thread_id} }
+sub socket { $_[0]-> {handle} }
 
 sub DESTROY
 {
@@ -106,6 +166,7 @@ sub DESTROY
 	$self-> SUPER::DESTROY
 		if defined($self-> {thread_self}) and
 		$self-> {thread_self} == threads-> tid;
+	close($self-> {handle}) if $self-> {handle};
 	$self-> kill;
 }
 
@@ -176,6 +237,10 @@ Same as C<new> but without a class.
 =item thread
 
 Returns internal thread object
+
+=item socket
+
+Returns the associated stream
 
 =item join
 

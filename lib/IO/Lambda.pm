@@ -1,4 +1,4 @@
-# $Id: Lambda.pm,v 1.97 2008/11/01 12:32:59 dk Exp $
+# $Id: Lambda.pm,v 1.106 2008/11/05 20:43:58 dk Exp $
 
 package IO::Lambda;
 
@@ -14,9 +14,9 @@ use vars qw(
 	$VERSION @ISA
 	@EXPORT_OK %EXPORT_TAGS @EXPORT_CONSTANTS @EXPORT_LAMBDA @EXPORT_STREAM @EXPORT_DEV
 	$THIS @CONTEXT $METHOD $CALLBACK $AGAIN
-	$DEBUG
+	$DEBUG_IO $DEBUG_LAMBDA %DEBUG
 );
-$VERSION     = '0.34';
+$VERSION     = '0.35';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -31,7 +31,7 @@ $VERSION     = '0.34';
 	io read write readwrite sleep tail tails tailo any_tail
 );
 @EXPORT_DEV    = qw(
-	_subname _d
+	_subname _o _t
 );
 @EXPORT_OK   = (@EXPORT_LAMBDA, @EXPORT_CONSTANTS, @EXPORT_STREAM, @EXPORT_DEV);
 %EXPORT_TAGS = (
@@ -41,7 +41,22 @@ $VERSION     = '0.34';
 	dev       => \@EXPORT_DEV,
 	all       => [ @EXPORT_LAMBDA, @EXPORT_STREAM, @EXPORT_CONSTANTS ],
 );
-$DEBUG = $ENV{IO_LAMBDA_DEBUG};
+
+if ( exists $ENV{IO_LAMBDA_DEBUG}) {
+	for my $p ( split ',', $ENV{IO_LAMBDA_DEBUG}) {
+		if ( $p =~ /^([^=]+)=(.*)$/) {
+			$DEBUG{lc $1}=$2;
+		} else {
+			$DEBUG{lc $p}++;
+		}
+	}
+	$DEBUG_IO     = $DEBUG{io}     || 0;
+	$DEBUG_LAMBDA = $DEBUG{lambda} || 0;
+	$SIG{__DIE__} = sub {
+		return if $^S;
+		Carp::confess(@_);
+	}
+}
 
 use constant IO_READ         => 4;
 use constant IO_WRITE        => 2;
@@ -76,7 +91,8 @@ my  $_doffs = 0;
 sub _d_in  { $_doffs++ }
 sub _d_out { $_doffs-- if $_doffs }
 sub _d     { ('  ' x $_doffs), _obj(shift), ': ', @_, "\n" }
-sub _obj   { $_[0] =~ /0x([\w]+)/; "lambda($1)." . ( $_[0]->{caller} || '()' ) }
+sub _o     { $_[0] =~ /0x([\w]+)/; $1 }
+sub _obj   { "lambda(". _o($_[0]) . ")." . ( $_[0]->{caller} || '()' ) }
 sub _t     { defined($_[0]) ? ( "time(", $_[0]-time(), ")" ) : () }
 sub _ev
 {
@@ -143,7 +159,7 @@ sub watch_io
 	weaken $rec->[0];
 	push @{$self-> {in}}, $rec;
 
-	warn _d( $self, "> ", _ev($rec)) if $DEBUG;
+	warn _d( $self, "> ", _ev($rec)) if $DEBUG_IO;
 
 	$LOOP-> watch( $rec );
 
@@ -167,7 +183,7 @@ sub watch_timer
 	weaken $rec->[0];
 	push @{$self-> {in}}, $rec;
 
-	warn _d( $self, "> ", _ev($rec)) if $DEBUG;
+	warn _d( $self, "> ", _ev($rec)) if $DEBUG_IO;
 
 	$LOOP-> after( $rec);
 	
@@ -198,7 +214,7 @@ sub watch_lambda
 
 	$lambda-> start if $lambda-> is_passive;
 
-	warn _d( $self, "> ", _ev($rec)) if $DEBUG;
+	warn _d( $self, "> ", _ev($rec)) if $DEBUG_LAMBDA;
 
 	return $rec;
 }
@@ -320,7 +336,7 @@ sub io_handler
 {
 	my ( $self, $rec) = @_;
 
-	warn _d( $self, '< ', _ev($rec)) if $DEBUG;
+	warn _d( $self, '< ', _ev($rec)) if $DEBUG_IO;
 
 	my $in = $self-> {in};
 	my $nn = @$in;
@@ -328,7 +344,7 @@ sub io_handler
 	die _d($self, 'stray ', _ev($rec))
 		if $nn == @$in or $self != $rec->[WATCH_OBJ];
 
-	_d_in if $DEBUG;
+	_d_in if $DEBUG_IO;
 
 	@{$self->{last}} = $rec-> [WATCH_CALLBACK]-> (
 		$self, 
@@ -336,11 +352,11 @@ sub io_handler
 		@{$self->{last}}
 	) if $rec-> [WATCH_CALLBACK];
 
-	_d_out if $DEBUG;
-	warn $self-> _msg('io') if $DEBUG;
+	_d_out if $DEBUG_IO;
+	warn $self-> _msg('io') if $DEBUG_IO;
 
 	unless ( @$in) {
-		warn _d( $self, 'stopped') if $DEBUG;
+		warn _d( $self, 'stopped') if $DEBUG_LAMBDA;
 		$self-> {stopped}++;
 	}
 }
@@ -350,7 +366,7 @@ sub lambda_handler
 {
 	my ( $self, $rec) = @_;
 
-	warn _d( $self, '< ', _ev($rec)) if $DEBUG;
+	warn _d( $self, '< ', _ev($rec)) if $DEBUG_LAMBDA;
 
 	my $in = $self-> {in};
 	my $nn = @$in;
@@ -367,7 +383,7 @@ sub lambda_handler
 	@$arr = grep { $_ != $rec } @$arr;
 	delete $EVENTS{"$lambda"} unless @$arr;
 
-	_d_in if $DEBUG;
+	_d_in if $DEBUG_LAMBDA;
 				
 	@{$self->{last}} = 
 		$rec-> [WATCH_CALLBACK] ? 
@@ -377,11 +393,11 @@ sub lambda_handler
 			) : 
 			@{$rec-> [WATCH_LAMBDA]-> {last}};
 
-	_d_out if $DEBUG;
-	warn $self-> _msg('tail') if $DEBUG;
+	_d_out if $DEBUG_LAMBDA;
+	warn $self-> _msg('tail') if $DEBUG_LAMBDA;
 
 	unless ( @$in) {
-		warn _d( $self, 'stopped') if $DEBUG;
+		warn _d( $self, 'stopped') if $DEBUG_LAMBDA;
 		$self-> {stopped} = 1;
 	}
 }
@@ -394,7 +410,7 @@ sub cancel_event
 
 	return unless @{$self-> {in}};
 
-	$LOOP-> remove_event($self, $rec) if $LOOP;
+	$LOOP-> remove_event($rec) if $LOOP;
 	@{$self-> {in}} = grep { $_ != $rec } @{$self-> {in}};
 
 	delete $EVENTS{$rec->[WATCH_LAMBDA]} if ref($rec->[WATCH_LAMBDA]);
@@ -452,6 +468,13 @@ sub cancel_all_events
 	}
 }
 
+sub autorestart
+{
+	$#_ ?
+		$_[0]-> {autorestart} = $_[1] :
+		( exists($_[0]-> {autorestart}) ?
+			$_[0]-> {autorestart} : 1)
+}
 sub is_stopped  { $_[0]-> {stopped}  }
 sub is_waiting  { not($_[0]->{stopped}) and @{$_[0]->{in}} }
 sub is_passive  { not($_[0]->{stopped}) and not(@{$_[0]->{in}}) }
@@ -465,7 +488,7 @@ sub reset
 	$self-> cancel_all_events;
 	@{$self-> {last}} = ();
 	delete $self-> {stopped};
-	warn _d( $self, 'reset') if $DEBUG;
+	warn _d( $self, 'reset') if $DEBUG_LAMBDA;
 }
 
 # start the state machine
@@ -475,13 +498,13 @@ sub start
 
 	croak "can't start active lambda, call reset() first" if $self-> is_active;
 
-	warn _d( $self, 'started') if $DEBUG;
+	warn _d( $self, 'started') if $DEBUG_LAMBDA;
 	@{$self->{last}} = $self-> {start}-> ($self, @{$self->{last}})
 		if $self-> {start};
-	warn $self-> _msg('initial') if $DEBUG;
+	warn $self-> _msg('initial') if $DEBUG_LAMBDA;
 
 	unless ( @{$self->{in}}) {
-		warn _d( $self, 'stopped') if $DEBUG;
+		warn _d( $self, 'stopped') if $DEBUG_LAMBDA;
 		$self-> {stopped} = 1;
 	}
 }
@@ -507,7 +530,7 @@ sub terminate
 
 	$self-> cancel_all_events;
 	$self-> {last} = \@error;
-	warn $self-> _msg('terminate') if $DEBUG;
+	warn $self-> _msg('terminate') if $DEBUG_LAMBDA;
 }
 
 # propagate event destruction on all levels
@@ -524,7 +547,7 @@ sub drive
 {
 	my $changed = 1;
 	my $executed = 0;
-	warn "IO::Lambda::drive --------\n" if $DEBUG;
+	warn "IO::Lambda::drive --------\n" if $DEBUG_LAMBDA;
 	while ( $changed) {
 		$changed = 0;
 
@@ -535,9 +558,9 @@ sub drive
 			$changed = 1;
 			$executed++;
 		}
-	warn "IO::Lambda::drive .........\n" if $DEBUG and $changed;
+	warn "IO::Lambda::drive .........\n" if $DEBUG_LAMBDA and $changed;
 	}
-	warn "IO::Lambda::drive +++++++++\n" if $DEBUG;
+	warn "IO::Lambda::drive +++++++++\n" if $DEBUG_LAMBDA;
 
 	return $executed;
 }
@@ -556,7 +579,7 @@ sub yield
 	}
 
 	if ( drive) {
-	# some callbacks we called, don't let them wait in sleep
+		# some callbacks we called, don't let them wait in sleep
 		return 1;
 	}
 
@@ -634,7 +657,7 @@ sub lambda(&)
 		local $METHOD   = \&_lambda_restart;
 		$cb ? $cb-> (@_) : @_;
 	});
-	$l-> {caller} = join(':', (caller)[1,2]) if $DEBUG;
+	$l-> {caller} = join(':', (caller)[1,2]) if $DEBUG_LAMBDA;
 	$l;
 }
 
@@ -665,6 +688,8 @@ sub context      { @_ ? @CONTEXT = @_ : @CONTEXT }
 sub this_frame   { @_ ? ( $METHOD, $CALLBACK) = @_ : ( $METHOD, $CALLBACK) }
 sub set_frame    { ( $THIS, $METHOD, $CALLBACK, @CONTEXT) = @_ }
 sub clear        { set_frame() }
+	
+END { ( $THIS, $METHOD, $CALLBACK, @CONTEXT) = (); }
 
 sub state($)
 {
@@ -818,8 +843,13 @@ sub tail(&)
 		if $THIS-> {override}->{tail};
 	
 	my ( $lambda, @param) = context;
-	$lambda-> reset if $lambda-> is_stopped;
-	$lambda-> call( @param);
+	$lambda-> reset
+		if $lambda-> is_stopped and $lambda-> autorestart;
+	if ( @param) {
+		$lambda-> call( @param);
+	} else {
+		$lambda-> call unless $lambda-> is_active;
+	}
 	$THIS-> add_tail( _subname(tail => shift), \&tail, $lambda, $lambda, @param);
 }
 
@@ -950,10 +980,11 @@ sub sysreader (){ lambda
 
 	this-> watch_io( IO_READ, $fh, $deadline, subname _sysreader => sub {
 		return undef, 'timeout' unless $_[1];
+                local $SIG{PIPE} = 'IGNORE';
 		my $n = sysread( $fh, $$buf, $length, length($$buf));
-		if ( $DEBUG) {
+		if ( $DEBUG_IO) {
 			warn "fh(", fileno($fh), ") read ", ( defined($n) ? "$n bytes" : "error $!"), "\n";
-			warn substr( $$buf, length($$buf) - $n) if $DEBUG > 2 and $n > 0;
+			warn substr( $$buf, length($$buf) - $n), "\n" if $DEBUG_IO > 1 and $n > 0;
 		}
 		return undef, $! unless defined $n;
 		return $n;
@@ -969,10 +1000,11 @@ sub syswriter (){ lambda
 
 	this-> watch_io( IO_WRITE, $fh, $deadline, subname _syswriter => sub {
 		return undef, 'timeout' unless $_[1];
+                local $SIG{PIPE} = 'IGNORE';
 		my $n = syswrite( $fh, $$buf, $length, $offset);
-		if ( $DEBUG) {
-			warn "fh(", fileno($fh), ") wrote ", ( defined($n) ? "$n bytes" : "error $!"), "\n";
-			warn substr( $$buf, $offset, $n) if $DEBUG > 2 and $n > 0;
+		if ( $DEBUG_IO) {
+			warn "fh(", fileno($fh), ") wrote ", ( defined($n) ? "$n bytes out of $length" : "error $!"), "\n";
+			warn substr( $$buf, $offset, $n), "\n" if $DEBUG_IO > 1 and $n > 0;
 		}
 		return undef, $! unless defined $n;
 		return $n;
@@ -1115,7 +1147,7 @@ sub resolve
 	undef $rec-> [WATCH_OBJ]; # unneeded references
 
 	unless ( @$in) {
-		warn _d( $self, 'stopped') if $DEBUG;
+		warn _d( $self, 'stopped') if $DEBUG_LAMBDA;
 		$self-> {stopped} = 1;
 	}
 }
@@ -1695,7 +1727,11 @@ Executes after C<$deadline>. C<$deadline> cannot be C<undef>.
 =item tail($lambda, @parameters)
 
 Issues C<< $lambda-> call(@parameters) >>, then waits for the C<$lambda>
-to complete.
+to complete. Since C<call> can only be done on inactive lambdas, will
+fail if C<@parameters> is not empty and C<$lambda> is already running.
+
+By default, C<tail> resets lambda if is was alredy finished. This
+behavior can be changed by manipulating C<autorestart> property.
 
 =item tails(@lambdas)
 
@@ -2020,6 +2056,12 @@ Cancels all watchers and switches the lambda to the passive state.
 If there are any lambdas that watch for this object, these will
 be called first.
 
+=item autorestart
+
+If set, gives permission to watchers to reset the lambda if it 
+becomes stopped. C<tail> does that when needed, other watchers
+may too. Is set by default.
+
 =item peek
 
 At any given time, returns stored data that are either passed
@@ -2220,6 +2262,17 @@ L<IO::Lambda::DNS> - asynchronous domain name resolver.
 L<IO::Lambda::SNMP> - SNMP requests lambda style. Requires L<SNMP>.
 
 =back
+
+=head1 DEBUGGING
+
+Various modules can be controlled with the single environment variable,
+C<IO_LAMBDA_DEBUG>, which is treated a comma-separated list of modules.
+For example,
+
+      env IO_LAMBDA_DEBUG=io=2,http perl script.pl
+
+displays debug messages from C<IO::Lambda> (with extra verbosity) and
+from C<IO::Lambda::HTTP>.
 
 =head1 BENCHMARKS
 
