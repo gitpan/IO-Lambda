@@ -1,4 +1,4 @@
-# $Id: Lambda.pm,v 1.110 2008/11/07 12:45:58 dk Exp $
+# $Id: Lambda.pm,v 1.112 2008/11/07 19:55:56 dk Exp $
 
 package IO::Lambda;
 
@@ -16,7 +16,7 @@ use vars qw(
 	$THIS @CONTEXT $METHOD $CALLBACK $AGAIN
 	$DEBUG_IO $DEBUG_LAMBDA %DEBUG
 );
-$VERSION     = '0.38';
+$VERSION     = '0.39';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -687,6 +687,7 @@ sub this         { @_ ? ($THIS, @CONTEXT) = @_ : $THIS }
 sub context      { @_ ? @CONTEXT = @_ : @CONTEXT }
 sub this_frame   { @_ ? ( $METHOD, $CALLBACK) = @_ : ( $METHOD, $CALLBACK) }
 sub set_frame    { ( $THIS, $METHOD, $CALLBACK, @CONTEXT) = @_ }
+sub save_frame   { ( $THIS, $METHOD, $CALLBACK, @CONTEXT) }
 sub clear        { set_frame() }
 	
 END { ( $THIS, $METHOD, $CALLBACK, @CONTEXT) = (); }
