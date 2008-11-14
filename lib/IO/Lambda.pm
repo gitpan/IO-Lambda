@@ -1,4 +1,4 @@
-# $Id: Lambda.pm,v 1.112 2008/11/07 19:55:56 dk Exp $
+# $Id: Lambda.pm,v 1.120 2008/11/14 20:14:52 dk Exp $
 
 package IO::Lambda;
 
@@ -12,11 +12,11 @@ use Time::HiRes qw(time);
 use vars qw(
 	$LOOP %EVENTS @LOOPS
 	$VERSION @ISA
-	@EXPORT_OK %EXPORT_TAGS @EXPORT_CONSTANTS @EXPORT_LAMBDA @EXPORT_STREAM @EXPORT_DEV
+	@EXPORT_OK %EXPORT_TAGS	@EXPORT_CONSTANTS @EXPORT_LAMBDA @EXPORT_STREAM @EXPORT_DEV @EXPORT_MISC
 	$THIS @CONTEXT $METHOD $CALLBACK $AGAIN
 	$DEBUG_IO $DEBUG_LAMBDA %DEBUG
 );
-$VERSION     = '0.39';
+$VERSION     = '0.40';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -27,13 +27,19 @@ $VERSION     = '0.39';
 	sysreader syswriter getline readbuf writebuf
 );
 @EXPORT_LAMBDA = qw(
-	this context lambda this_frame again state
+	this context lambda again state restartable
 	io read write readwrite sleep tail tails tailo any_tail
+);
+@EXPORT_MISC    = qw(
+	set_frame get_frame swap_frame
 );
 @EXPORT_DEV    = qw(
 	_subname _o _t
 );
-@EXPORT_OK   = (@EXPORT_LAMBDA, @EXPORT_CONSTANTS, @EXPORT_STREAM, @EXPORT_DEV);
+@EXPORT_OK   = (
+	@EXPORT_LAMBDA, @EXPORT_CONSTANTS, @EXPORT_STREAM, 
+	@EXPORT_DEV, @EXPORT_MISC,
+);
 %EXPORT_TAGS = (
 	lambda    => \@EXPORT_LAMBDA, 
 	stream    => \@EXPORT_STREAM, 
@@ -52,10 +58,11 @@ if ( exists $ENV{IO_LAMBDA_DEBUG}) {
 	}
 	$DEBUG_IO     = $DEBUG{io}     || 0;
 	$DEBUG_LAMBDA = $DEBUG{lambda} || 0;
+	$IO::Lambda::Loop::DEFAULT = $DEBUG{loop} if $DEBUG{loop};
 	$SIG{__DIE__} = sub {
 		return if $^S;
 		Carp::confess(@_);
-	}
+	} if $DEBUG{die};
 }
 
 use constant IO_READ         => 4;
@@ -93,7 +100,7 @@ sub _d_out { $_doffs-- if $_doffs }
 sub _d     { ('  ' x $_doffs), _obj(shift), ': ', @_, "\n" }
 sub _o     { $_[0] =~ /0x([\w]+)/; $1 }
 sub _obj   { "lambda(". _o($_[0]) . ")." . ( $_[0]->{caller} || '()' ) }
-sub _t     { defined($_[0]) ? ( "time(", $_[0]-time(), ")" ) : () }
+sub _t     { defined($_[0]) ? ( "time(", (($_[0] < 1_000_000) ? $_[0] : $_[0]-time()), ")" ) : () }
 sub _ev
 {
 	$_[0] =~ /0x([\w]+)/;
@@ -464,7 +471,6 @@ sub cancel_all_events
 		# global destruction in action! this should be $self, but isn't
 		next unless ref($rec-> [WATCH_LAMBDA]); 
 		$watcher-> lambda_handler( $rec);
-		# push @cancel, $watcher if $cascade; # XXX
 	}
 }
 
@@ -683,12 +689,13 @@ sub again
 }
 
 # define context
-sub this         { @_ ? ($THIS, @CONTEXT) = @_ : $THIS }
-sub context      { @_ ? @CONTEXT = @_ : @CONTEXT }
-sub this_frame   { @_ ? ( $METHOD, $CALLBACK) = @_ : ( $METHOD, $CALLBACK) }
-sub set_frame    { ( $THIS, $METHOD, $CALLBACK, @CONTEXT) = @_ }
-sub save_frame   { ( $THIS, $METHOD, $CALLBACK, @CONTEXT) }
-sub clear        { set_frame() }
+sub this        { @_ ? ($THIS, @CONTEXT)    = @_ : $THIS }
+sub context     { @_ ? (@CONTEXT)           = @_ : @CONTEXT }
+sub restartable { @_ ? ($METHOD, $CALLBACK) = @_ : ( $METHOD, $CALLBACK) }
+sub set_frame   { ( $THIS, $METHOD, $CALLBACK, @CONTEXT) = @_ }
+sub get_frame   { ( $THIS, $METHOD, $CALLBACK, @CONTEXT) }
+sub swap_frame  { my @f = get_frame; set_frame(@_); @f }
+sub clear       { set_frame() }
 	
 END { ( $THIS, $METHOD, $CALLBACK, @CONTEXT) = (); }
 
@@ -1153,6 +1160,12 @@ sub resolve
 	}
 }
 
+sub callout
+{
+	my ( $self, $cb, @param) = @_;
+	@{$self->{last}} = $cb ? $cb-> (@param) : @param;
+}
+
 sub add_loop     { push @LOOPS, shift }
 sub remove_loop  { @LOOPS = grep { $_ != $_[0] } @LOOPS }
 
@@ -1161,7 +1174,7 @@ use vars qw($DEFAULT);
 use strict;
 use warnings;
 
-$DEFAULT = 'Select';
+$DEFAULT = 'Select' unless defined $DEFAULT;
 sub default { $DEFAULT = shift }
 
 sub new
@@ -1772,9 +1785,9 @@ is thus equivalent to
 
 C<again> passes the current context to the predicate.
 
-If C<@frame> is provided, then it is treated as result of previous C<this_frame> call.
+If C<@frame> is provided, then it is treated as result of previous C<restartable> call.
 It contains data sufficient to restarting another call, instead of the current.
-See C<this_frame> for details.
+See C<restartable> for details.
 
 =item context @ctx
 
@@ -1798,14 +1811,14 @@ instead of
     my $q = lambda { ... };
     $q-> wait;
 
-=item this_frame(@frame)
+=item restartable(@frame)
 
 If called without parameters, returns the current callback frame, that
 can be later used in C<again>. Otherwise, replaces the internal frame
 variables, that doesn't affect anything immediately, but will be used by C<again>
 that is called without parameters.
 
-This property is only used when the predicate inside which C<this_frame> was
+This property is only used when the predicate inside which C<restartable> was
 fetched, is restartable. Since it is not a requirement for a user-defined
 predicate to be restartable, this property is not universally useful.
 
@@ -1814,7 +1827,7 @@ Example:
     context lambda { 1 };
     tail {
         return if 3 == shift;
-    	my @frame = this_frame;
+    	my @frame = restartable;
         context lambda { 2 };
 	tail {
 	   context lambda { 3 };
@@ -1823,7 +1836,7 @@ Example:
     }
 
 The outermost tail callback will be called twice: first time in the normal course of events,
-and second time as a result of the C<again> call. C<this_frame> and C<again> thus provide
+and second time as a result of the C<again> call. C<restartable> and C<again> thus provide
 a kind of restartable continuations.
 
 =item predicate $lambda, $callback, $method, $name
@@ -2293,10 +2306,15 @@ For example,
       env IO_LAMBDA_DEBUG=io=2,http perl script.pl
 
 displays I/O debug messages from C<IO::Lambda> (with extra verbosity) and from
-C<IO::Lambda::HTTP>. C<IO::Lambda> respond for 2 keys: I<io> and I<lambda>.
-I<io> debugs the asynchronous (I/O) operations, I<lambda> debugs the
-synchronous (tail, wait, etc) operations. Keys recognized for the other
-modules: select, dbi,http,signal,message,thread,fork,select.
+C<IO::Lambda::HTTP>. C<IO::Lambda> respond for the following keys: I<io> (async
+operations), I<lambda> (sync operations), I<die> (stack trace), I<loop> (set
+loop module). Keys recognized for the other modules:
+select,dbi,http,https,signal,message,thread,fork,poll,flock.
+
+=head1 MAILING LIST
+
+I<io-lambda-general at lists.sourceforge.net>, thanks to sourceforge.
+Subscribe by visiting L<https://lists.sourceforge.net/lists/listinfo/io-lambda-general>.
 
 =head1 BENCHMARKS
 
