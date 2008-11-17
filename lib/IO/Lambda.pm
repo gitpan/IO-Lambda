@@ -1,4 +1,4 @@
-# $Id: Lambda.pm,v 1.120 2008/11/14 20:14:52 dk Exp $
+# $Id: Lambda.pm,v 1.124 2008/11/17 14:28:59 dk Exp $
 
 package IO::Lambda;
 
@@ -16,7 +16,7 @@ use vars qw(
 	$THIS @CONTEXT $METHOD $CALLBACK $AGAIN
 	$DEBUG_IO $DEBUG_LAMBDA %DEBUG
 );
-$VERSION     = '0.40';
+$VERSION     = '0.41';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -1278,8 +1278,8 @@ C<IO::Select>, C<IO::Epoll>, C<IO::Kqueue> etc. I won't go deepeer into
 describing pros and contras for programming on this level, this should be more
 or less obvious.
 
-Perl modules of the next abstraction layer are often characterised by two
-things: portability and event loops. While the first layer calls are seldom
+Perl modules of the next abstraction layer are often characterised by
+portability and event loops. While the modules of the first layer are seldom
 portable, and have no event loops, the second layer modules strive to be
 OS-independent, and use callbacks to ease the async IO programming. These
 modules mostly populate the "asynchronous input-output programming frameworks"
@@ -1301,7 +1301,7 @@ C<Prima>, or C<AnyEvent>, depending on the nature of the task.
 C<IO::Lambda> also allows the programmer to build complex protocols, and is
 also based on event loops, callbacks, and is portable. It differs from C<POE>
 in the way the FSMs are declared. Where C<POE> requires an explicit switch from
-one state to another, using (f.ex.) C<post> or C<yield> commands, C<IO::Lambda>
+one state to another, using f.ex. C<post> or C<yield> commands, C<IO::Lambda>
 incorporates the switching directly into the program syntax. Consider C<POE>
 code:
 
@@ -1900,7 +1900,7 @@ Let's take a lambda that needs to implement a very simple HTTP/0.9 request:
 
 C<getline> will read from C<$handle> to C<$buf>, and will wake up when new line
 is there. However, what if we need, for example, HTTPS instead of HTTP, where
-reading from socket may involve some writing, and of course some, waiting?
+reading from socket may involve some writing, and of course some waiting?
 Then the first default parameter to getline has to be replaced. By default, 
 
    context getline, $handle, $buf;
@@ -1930,9 +1930,9 @@ instead, that should conform to sysreader signature:
    }
 
 I don't show the actual implementation of a HTTPS read (if you're curious, look
-at L<IO::Lambda::HTTPS> ), but the idea is that inside that reader, it is
+at L<IO::Lambda::HTTP::HTTPS> ), but the idea is that inside that reader, it is
 perfectly fine to do any number of read and write operations, and wait for
-their completion, as long as the lambda will sooner or later return the data.
+their completion, as long as the lambda will sooner or later returns the data.
 C<getline> (or, rather, C<readbuf> that C<getline> is based on) won't care
 about internal states of the reader. 
 
@@ -2295,6 +2295,14 @@ file handles.
 
 L<IO::Lambda::DBI> - asynchronous DBI
 
+=item *
+
+L<IO::Lambda::Poll> - generic polling wrapper
+
+=item *
+
+L<IO::Lambda::Flock> - flock(2) wrapper
+
 =back
 
 =head1 DEBUGGING
@@ -2306,10 +2314,10 @@ For example,
       env IO_LAMBDA_DEBUG=io=2,http perl script.pl
 
 displays I/O debug messages from C<IO::Lambda> (with extra verbosity) and from
-C<IO::Lambda::HTTP>. C<IO::Lambda> respond for the following keys: I<io> (async
+C<IO::Lambda::HTTP>. C<IO::Lambda> responds for the following keys: I<io> (async
 operations), I<lambda> (sync operations), I<die> (stack trace), I<loop> (set
 loop module). Keys recognized for the other modules:
-select,dbi,http,https,signal,message,thread,fork,poll,flock.
+I<select,dbi,http,https,signal,message,thread,fork,poll,flock>.
 
 =head1 MAILING LIST
 

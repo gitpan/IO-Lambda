@@ -1,5 +1,5 @@
-# $Id: Poll.pm,v 1.2 2008/11/14 20:13:56 dk Exp $
-package IO::Lambda::Loop::Poll;
+# $Id: Poll.pm,v 1.4 2008/11/16 21:15:04 dk Exp $
+package IO::Lambda::Poll;
 use vars qw(
 	@ISA @EXPORT_OK %EXPORT_TAGS 
 	$DEBUG @RECORDS @TIMER $TIMER_ACTIVE $MASTER
@@ -7,7 +7,7 @@ use vars qw(
 
 $DEBUG = $IO::Lambda::DEBUG{poll} || 0;
 @ISA = qw(Exporter);
-@EXPORT_OK  = qw(poll_event poll_cancel);
+@EXPORT_OK  = qw(poll_event poll_cancel poller);
 %EXPORT_TAGS = ( all => \@EXPORT_OK);
 
 use strict;
@@ -25,8 +25,8 @@ END {
 };
 
 # There'll also be a single timer as we need timeouts
-$TIMER[WATCH_OBJ] = bless {}, "IO::Lambda::Loop::Poll::Timer";
-sub IO::Lambda::Loop::Poll::Timer::io_handler
+$TIMER[WATCH_OBJ] = bless {}, "IO::Lambda::Poll::Timer";
+sub IO::Lambda::Poll::Timer::io_handler
 {
 	warn "poll.timer < expired\n" if $DEBUG;
 	$TIMER_ACTIVE = 0;
@@ -36,7 +36,7 @@ sub empty { 0 == @RECORDS }
 
 sub remove
 {
-	my $lambda = shift;
+	my $lambda = $_[1];
 	my $n = @RECORDS;
 	@RECORDS = grep { $_-> {this} ne $lambda } @RECORDS;
 	return if $n == @RECORDS;
@@ -136,7 +136,7 @@ sub poll_event
 	};
 
 	reset_timer;
-	warn "poll.new($RECORDS[-1])\n" if $DEBUG;
+	warn "poll.new($RECORDS[-1]) on ", this, "\n" if $DEBUG;
 
 	return $RECORDS[-1];
 }
@@ -152,6 +152,29 @@ sub poll_cancel
 	reset_timer;
 }
 
+sub poll_handler
+{
+	my ( $expired, $cb, @opt) = @_;
+	return 1,1 if $cb->(@opt);
+	return 1,0 if $expired;
+	return 0;
+}
+
+sub poller(&)
+{
+	my $cb = _subname poller => shift;
+
+	lambda {
+		my %opt = @_;
+		poll_event(
+			undef, undef, \&poll_handler, 
+			exists($opt{timeout}) ? $opt{timeout} : $opt{deadline},
+			$opt{frequency}, 
+			$cb, %opt
+		);
+	}
+}
+
 1;
 
 __DATA__
@@ -160,7 +183,7 @@ __DATA__
 
 =head1 NAME
 
-IO::Lambda::Loop::Poll - emulate asynchronous behavior by polling
+IO::Lambda::Poll - emulate asynchronous behavior by polling
 
 =head1 DESCRIPTION
 
@@ -169,8 +192,50 @@ provides a layer between them and the lambda framework.
 
 =head1 SYNOPSIS
 
+    use IO::Lambda qw(:lambda);
+    use IO::Lambda::Poll qw(poller);
+
+    lambda {
+       context 
+          poller { check_if_ready }, 
+	  timeout   => 5,
+	  frequency => 0.1;
+    tail {
+       print shift() ? "ok\n" : "timeout\n";
+    }}
+
+=head1 API
+
+=over
+
+=item poller (polling_function :: (%opt -> boolean)) :: (%opt) -> boolean
+
+Accepts anonymous code, that returns a single boolean flag, which shows whether
+polling succeeded or not. Returns a new lambda, that accepts C<'timeout'>,
+C<'deadline'>, and C<'frequency'> options ( see C<poll_event> below for options
+description). The lambda returns 1 if polling succeeds within a given time
+span, or 0 otherwise.  The options passed to the lambda are also passed to the
+polling function.
+
+=item poll_event $callback, $method, $poller, $deadline, $frequency, @param
+
+Registers a polling event on the current lambda. C<$poller> will be called with
+first parameter as the expiration flag, so it will be up to the porgrammer how
+to respond if both polling succeeded and timeout occured. C<$poller> must
+return first parameter the success flag, which means, if true, that the event
+must not be watched anymore, and the associated lambda must be notified of the
+event. Other parameters are passed to C<$callback>, in free form, according to
+the API that the caller of C<poll_event> implements.
+
+C<$frequency> sets up the polling frequency. If undef, then polling occurs
+during idle time, when other events are passing.
+
+Returns the newly created event record.
+
+Example of use:
+
     use IO::Lambda qw(:all :dev);
-    use IO::Lambda::Loop::Poll qw(poll_event);
+    use IO::Lambda::Poll qw(poll_event);
 
     sub check_status(&)
     {
@@ -197,29 +262,10 @@ provides a layer between them and the lambda framework.
 	return 0;
     }
 
-=head1 API
-
-=over
-
-=item poll_event $callback, $method, $poller, $deadline, $frequency, @param
-
-Registers a polling event on the current lambda. C<$poller> will be called with
-first parameter as the expiration flag, so it will be up to the porgrammer how
-to respond if both polling succeeded and timeout occured. C<$poller> must
-return first parameter the success flag, which means, if true, that the event
-must not be watched anymore, and the associated lambda must be notified of the
-event. Other parameters are passed to C<$callback>, in free form, according to
-the API that the caller of C<poll_event> implements.
-
-C<$frequency> sets up the polling frequency. If undef, then polling occurs
-during idle time, when other events are passing.
-
-Returns the newly created event record.
-
 =item poll_cancel $rec
 
-Brutally removes the polling record from the watching queue. For
-the graceful remove, use one of the following:
+Brutally removes the polling record from the watching queue. Not for direct use.
+For the graceful event removal use one of the following:
 
     $lambda-> cancel_event( $rec-> {bind} )
 
