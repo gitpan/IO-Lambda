@@ -1,4 +1,4 @@
-# $Id: DBI.pm,v 1.10 2008/11/28 13:18:25 dk Exp $
+# $Id: DBI.pm,v 1.13 2008/12/17 10:08:16 dk Exp $
 package IO::Lambda::DBI::Storable;
 
 use Storable qw(freeze thaw);
@@ -83,7 +83,7 @@ sub dbi_message
 
 	return lambda { $error } if $error;
 	warn _d($self) . " > $method(@_)\n" if $DEBUG;
-	$self-> new_message( $msg, $self-> {timeout} );
+	return $self-> new_message( $msg, $self-> {timeout} );
 }
 
 sub connect    { shift-> dbi_message( connect    => 0,         @_) }
@@ -166,10 +166,10 @@ IO::Lambda::DBI - asynchronous DBI
 
 =head1 DESCRIPTION
 
-The module implements asynchronous DBI proxy object, that can remote DBI calls
-using any given stream - sockets, pipes, etc. All calls to DBI methods are
-implemented as method calls to the object, that return lambdas, which shall be
-waited for
+The module implements asynchronous DBI proxy object, that remotes DBI calls
+using any given file handle, such as stream sockets, pipes, etc. All calls to
+DBI methods are implemented as method calls to the object, which return
+lambdas, that shall be subsequently called and awaited for completion.
 
 =head1 SYNOPSIS
 
@@ -209,9 +209,9 @@ All remoted methods return lambdas of type
    dbi_result :: () -> ( 1, @result | 0, $error )
 
 where depending on the first returned item in the array, the other items are
-either DBI method result, or an error.
+either DBI method results, or an error.
 
-The class handles AUTOLOAD methods as proxy methods, so calls like
+The class handles AUTOLOAD methods as proxy methods, so calls such as
 C<< $dbh-> selectrow_array >> are perfectly legal.
 
 =over
@@ -223,7 +223,7 @@ See L<IO::Lambda::Message/new>.
 =item connect($dsn, $user, $auth, %attr) :: dbi_result
 
 Proxies C<DBI::connect>. In case of failure, depending on C<RaiseError> flag,
-returns either C<0 | $error> or C<1 | $error>.
+returns either C<(0,$error)> or C<(1,$error)>.
 
 =item disconnect :: dbi_result
 
