@@ -1,4 +1,4 @@
-# $Id: Thread.pm,v 1.19 2008/12/17 12:36:36 dk Exp $
+# $Id: Thread.pm,v 1.22 2009/01/08 15:23:26 dk Exp $
 package IO::Lambda::Thread;
 use base qw(IO::Lambda);
 use strict;
@@ -107,7 +107,7 @@ sub threaded(&)
 
 		# now wait
 		context $this-> {socket};
-		read {
+		readable {
 			my $this = this;
 			delete $this-> {thread};
 			close($this-> {socket});
@@ -183,12 +183,13 @@ C<join>'ed to avoid problems. For example:
     $thread-> join;
 
 Note that C<join> is a blocking call, so one needs to be sure that the thread
-indeed is finished before joining it. By default, the child thread will close
+indeed is finished before joining it. By default, the child thread closes
 its side of the socket, thus making the parent side readable. However, the
 child code can also hijack the socket for its own needs, so if that
 functionality is needed, one must create an extra layer of communication that
-will ensure that the child code is properly exited, so that the parent can
-reliably call C<join> without blocking.
+ensures that the child code is properly exited, so that the parent can
+reliably call C<join> without blocking (see L<IO::Lambda::Message>, that 
+is destined exactly for this use).
 
 C<$code> is executed in another thread's context, and is passed the communication
 socket ( if C<$pass_socket> is set to 1 ). C<$code> is also passed C<@param>.
@@ -196,12 +197,12 @@ Data returned from the code can be retrieved from C<join>.
 
 =item threaded($code) :: () -> ( @results )
 
-Creates a lambda, that will execute C<$code> in a newly created thread.
-The lambda will finish when the C<$code> and the thread are finished,
-and will return results returned by C<$code>.
+Creates a lambda, that executes C<$code> in a newly created thread.
+The lambda finishes when the C<$code> and the thread are finished,
+and returns results returned by C<$code>.
 
 Note, that this lambda, if C<terminate>'d between after being started and
-before being finished, will have no chance to wait for completion of the
+before being finished, has no chance to wait for completion of the
 associated thread, and so Perl will complain. To deal with that, obtain the
 thread object manually and wait for the thread:
 
@@ -215,7 +216,7 @@ thread object manually and wait for the thread:
 
     # or asynchronously
     context $l-> socket;
-    read { $l-> thread-> join };
+    readable { $l-> thread-> join };
 
 =item thread($lambda)
 
@@ -236,7 +237,7 @@ Threading in Perl is fragile, so errors like the following:
    Unbalanced string table refcount: (1) for "GEN1" during global
    destruction
 
-are due some obscure Perl bugs. They are triggered, in my experience, when a
+are due to some obscure Perl bugs. They are triggered, in my experience, when a
 child thread tries to deallocate scalars that it thinks belongs to that thread.
 This can be sometimes avoided with explicit cleaning up of scalars that may be
 visible in threads.  For example, calls as
