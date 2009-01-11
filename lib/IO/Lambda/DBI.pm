@@ -1,4 +1,4 @@
-# $Id: DBI.pm,v 1.13 2008/12/17 10:08:16 dk Exp $
+# $Id: DBI.pm,v 1.18 2009/01/11 09:49:36 dk Exp $
 package IO::Lambda::DBI::Storable;
 
 use Storable qw(freeze thaw);
@@ -75,11 +75,40 @@ sub outcoming
 	return ( 1, @$msg);
 }
 
+sub begin_group
+{
+	my $self = shift;
+	croak "Group already started" if exists $self-> {post};
+	$self-> {post} = [];
+	return ();
+}
+
+sub end_group
+{
+	my $self = shift;
+	my $p = delete $self-> {post};
+	croak "Group not started" unless $p;
+	return lambda {} unless @$p;
+
+	my ( $msg, $error) = $self-> encode([ 'multicall', 1, $p ]);
+
+	return lambda { $error } if $error;
+	warn _d($self) . " > end_group(@_)\n" if $DEBUG;
+
+	return $self-> new_message( $msg, $self-> {timeout} );
+}
+
 sub dbi_message
 {
 	my ( $self, $method, $wantarray) = ( shift, shift, shift );
-	$wantarray ||= 0;
-	my ( $msg, $error) = $self-> encode([ $method, $wantarray, @_]);
+
+	my $packet = [ $method, $wantarray, @_ ];
+	if ( $self-> {post}) {
+		push @{ $self->{post} }, $packet;
+		return ();
+	}
+
+	my ( $msg, $error) = $self-> encode( $packet);
 
 	return lambda { $error } if $error;
 	warn _d($self) . " > $method(@_)\n" if $DEBUG;
@@ -89,9 +118,20 @@ sub dbi_message
 sub connect    { shift-> dbi_message( connect    => 0,         @_) }
 sub disconnect { shift-> dbi_message( disconnect => 0,         @_) }
 sub call       { shift-> dbi_message( call       => wantarray, @_) }
-sub set_attr   { shift-> dbi_message( set_attr   => 0, @_) }
+sub set_attr   { shift-> dbi_message( set_attr   => 0,         @_) }
 sub get_attr   { shift-> dbi_message( get_attr   => wantarray, @_) }
-sub prepare    { croak "prepare() is unimplemented" }
+
+sub prepare
+{
+	my ( $self, $stmt) = @_;
+	lambda {
+		context $self-> dbi_message( prepare => 0, $stmt);
+	tail {
+		my $ok = shift;
+		return 0, $_[0] unless $ok;
+		return 1, IO::Lambda::DBI::Statement-> new($self, $_[0]);
+	}}
+}
 
 sub DESTROY {}
 
@@ -101,6 +141,35 @@ sub AUTOLOAD
 	my $method = $AUTOLOAD;
 	$method =~ s/^.*:://;
 	shift-> dbi_message( call => wantarray, $method, @_);
+}
+
+package IO::Lambda::DBI::Statement;
+
+sub new
+{
+	my ( $class, $owner, $obj_id) = @_;
+	return bless {
+		owner => $owner,
+		id    => $obj_id,
+	}, $class;
+}
+
+sub DESTROY
+{
+}
+
+sub AUTOLOAD
+{
+	use vars qw($AUTOLOAD);
+	my $method = $AUTOLOAD;
+	$method =~ s/^.*:://;
+	my $self = shift;
+
+	return $self-> {owner}-> dbi_message( 
+		execute => wantarray, 
+		$method, $self-> {id},
+		@_
+	);
 }
 
 package IO::Lambda::Message::DBI;
@@ -116,7 +185,8 @@ sub connect
 	my $self = shift;
 	die "already connected\n" if $self-> {dbh};
 	$self-> {dbh} = DBI-> connect(@_);
-	return $DBI::errstr unless $self-> {dbh};
+	die $DBI::errstr, "\n" unless $self-> {dbh};
+	$self-> {prepared} = {};
 	return undef;
 }
 
@@ -152,6 +222,49 @@ sub get_attr
 	die "not connected\n" unless $self-> {dbh};
 	return @{$self->{dbh}}{@keys};
 
+}
+
+sub prepare
+{
+	my ( $self, $stmt) = @_;
+	die "not connected\n" unless $self-> {dbh};
+	
+	my $s = $self-> {dbh}-> prepare($stmt);
+	die $self-> {dbh}-> errstr unless $s;
+
+	$self-> {prepared}-> {"$s"} = $s;
+	return "$s";
+}
+
+sub execute
+{
+	my ( $self, $method, $stmt, @p) = @_;
+	
+	die "not connected\n" unless $self-> {dbh};
+	my $p = $self-> {prepared}-> {$stmt};
+	die "no such prepared statement\n" unless $p;
+	delete $self-> {prepared}-> {$stmt} if $method eq 'finish';
+	return $p-> $method(@p);
+}
+
+sub multicall
+{
+	my ( $self, $post) = @_;
+
+	my @ret;
+	for ( @$post) {
+		my $method = shift @$_;
+		my $want   = shift @$_;
+		die "no such method: $method" unless $self-> can($method);
+		unless ( defined $want) {
+			$self-> $method(@$_);
+		} elsif ( $want) {
+			push @ret, $self-> $method(@$_);
+		} else {
+			push @ret, scalar($self-> $method(@$_));
+		}
+	}
+	return wantarray ? @ret : $ret[0];
 }
 
 1;
@@ -241,6 +354,40 @@ Sets attributes on a DBI handle.
 
 Retrieves values for attribute keys from a DBI handle.
 
+=item prepare($statement)
+
+Returns a new prepared statement object or an error string.
+All method calls on this object return lambda that also
+wait until remote methods are executed.
+
+=item begin_group(), end_group()
+
+These two methods allow grouping of DBI calls. C<begin_group()>
+affects a C<IO::Lambda::DBI> object so that all calls to remoted
+methods are not stored in the queue (and, consequently, not executed
+one at a time). but are accumulated instead. C<end_group()> ends
+such buffering, sends the message incapsulating all stored calls,
+and returns a lambda that executes when all stored calls are finished
+and replied to. The lambda returns results to all accumulated calls.
+
+Note: each stored call registers whether it is called in array or scalar
+context. The results are returned accordingly in a list. so the caller
+is responsible for parsing the results if some or all calls were made
+in the array context.
+
+Example:
+    
+    context
+        $dbi-> begin_group,
+	$dbi-> selectrow_arrayref("select * from a"),
+	$dbi-> selectrow_arrayref("select * from b"),
+	$dbi-> end_group;
+    tail {
+    	return warn "error:$_[0]" unless shift;
+	my ( $a, $b) = @_;
+    }
+
+
 =back
 
 =head1 IO::Lambda::Message::DBI
@@ -250,7 +397,7 @@ blocking, server side that does the actual calls to the DBI.
 
 =head1 BUGS
 
-C<DBI::prepare> is unimplemented.
+C<DBI::prepare> is not tested.
 
 =head1 SEE ALSO
 

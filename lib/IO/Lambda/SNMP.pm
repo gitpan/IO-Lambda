@@ -1,4 +1,4 @@
-# $Id: SNMP.pm,v 1.15 2009/01/08 15:23:26 dk Exp $
+# $Id: SNMP.pm,v 1.17 2009/01/09 12:07:19 dk Exp $
 package IO::Lambda::SNMP;
 use vars qw(
 	$DEBUG
@@ -47,6 +47,7 @@ sub yield
 {
 	warn "snmp.yield\n" if $DEBUG;
 	SNMP::MainLoop(1e-6);
+	reshuffle_fds();
 }
 # Use the same $MASTER for the lambda emulator and do not call anything in the handler,
 # but do that in yield()
@@ -72,7 +73,7 @@ sub reshuffle_fds
 	# kill old handles
 	my %all = map { $_ => 1 } @fds;
 	for my $old ( grep { not exists $all{$_} } keys %ACTIVE_FDS) {
-		$IO::Lambda::LOOP-> cancel_event( delete $ACTIVE_FDS{$old});
+		$IO::Lambda::LOOP-> remove_event( delete $ACTIVE_FDS{$old});
 		warn "snmp.remove: $old\n" if $DEBUG;
 	}
 
@@ -147,8 +148,6 @@ sub snmpcallback
 	$q-> terminate(@_);
 	undef $c;
 	undef $q;
-
-	reshuffle_fds();
 }
 
 
