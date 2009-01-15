@@ -8,3 +8,5 @@ echo "Raw sockets using select"
 time perl tcp-raw.pl
 echo "POE using select"
 time perl tcp-poe.pl
+echo "POE using select, optimized"
+time perl tcp-poe-optimized.pl

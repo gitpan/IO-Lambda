@@ -1,4 +1,4 @@
-# $Id: tcp-raw.pl,v 1.1 2008/07/09 09:00:47 dk Exp $
+# $Id: tcp-raw.pl,v 1.3 2009/01/15 09:54:59 dk Exp $
 # An echo client-server benchmark
 use strict;
 use Time::HiRes qw(time);
@@ -28,8 +28,8 @@ sub sock
 		PeerPort  => $port,
 		Proto     => 'tcp',
 	);
+	die "connect() error: $!$^E\n" unless $x;
 	$x-> autoflush(1);
-	die "connect() error: $!\n" unless $x;
 	return $x;
 }
 
@@ -37,18 +37,21 @@ my $t = time;
 for my $cycle ( 1..$CYCLES) {
 	my $sock = sock();
 	my $cfh = fileno($sock);
+AGAIN:
 	my ($r, $w) = ('','');
-	vec($r, $_, 1) = 1 for $cfh, $sfh, $s2fh;
-	vec($w, $_, 1) = 1 for $cfh;
+	vec($r, $_, 1) = 1 for grep { defined } $cfh, $sfh, $s2fh;
+	vec($w, $_, 1) = 1 for grep { defined } $cfh;
 	my $n = select( $r, $w, undef, undef);
 	die "select:$!\n" unless $n;
-	if ( vec($r, $cfh, 1)) {
-		close $sock;
-	}
-	if ( vec($w, $cfh, 1)) {
+
+	my $finished;
+	if ( defined($cfh) and vec($w, $cfh, 1)) {
 		print $sock "can write $cycle\n";
 	}
-
+	if ( defined($cfh) and vec($r, $cfh, 1)) {
+		close $sock;
+		undef $cfh;
+	}
 	if ( vec($r, $sfh, 1)) {
 		$conn = IO::Handle-> new;
 		accept( $conn, $serv_sock) or die "accept() error:$!";
@@ -59,7 +62,11 @@ for my $cycle ( 1..$CYCLES) {
 		my $r = <$conn>;
 		print $conn $r;
 		close $conn;
+		close $sock;
+		$finished++;
 	}
+
+	goto AGAIN unless $finished;
 }
 $t = time - $t;
 printf "%.3f sec\n", $t;
