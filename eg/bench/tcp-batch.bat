@@ -1,16 +1,15 @@
-#!/bin/sh
-
+@echo off
 echo "Lambda using select"
-time perl tcp-lambda.pl
+perl tcp-lambda.pl
 echo "Lambda using select, optimized"
-time perl tcp-lambda-optimized.pl
+perl tcp-lambda-optimized.pl
 echo "Lambda using AnyEvent"
-time perl tcp-lambda.pl --anyevent
+perl tcp-lambda.pl --anyevent
 echo "Raw sockets using select"
-time perl tcp-raw.pl
+perl tcp-raw.pl
 echo "POE using select, components"
-time perl tcp-poe-components.pl
+perl tcp-poe-components.pl
 echo "POE using select, raw sockets"
-time perl tcp-poe-raw.pl
+perl tcp-poe-raw.pl
 echo "POE using select, optimized"
-time perl tcp-poe-optimized.pl
+perl tcp-poe-optimized.pl

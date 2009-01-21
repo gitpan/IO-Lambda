@@ -1,4 +1,4 @@
-# $Id: tcp-lambda.pl,v 1.4 2009/01/15 09:46:18 dk Exp $
+# $Id: tcp-lambda-optimized.pl,v 1.1 2009/01/17 11:26:53 dk Exp $
 # An echo client-server benchmark
 use strict;
 use IO::Lambda qw(:all);
@@ -21,19 +21,6 @@ my $serv_sock = IO::Socket::INET-> new(
 );
 die "listen() error: $!\n" unless $serv_sock;
 
-sub session
-{ 
-	my $conn = shift;
-	lambda {
-		context getline(), $conn, \(my $buf);
-	tail {
-		my $s = shift;
-		return unless defined $s;
-		print $conn $s;
-		again;
-	}}
-}
-
 
 my $server = lambda {
 	context $serv_sock;
@@ -41,11 +28,12 @@ my $server = lambda {
 		my $conn = IO::Handle-> new;
 
 		accept( $conn, $serv_sock) or die "accept() error:$!";
-		$conn-> autoflush(1);
 		again;
 
-		context session($conn);
-		tail {
+		context $conn;
+		readable {
+			my $input = <$conn>;
+			print $conn $input if defined $input;
 			close $conn;
 		};
 	};
@@ -61,20 +49,18 @@ sub sock
 		Proto     => 'tcp',
 	);
 	die "connect() error: $!$^E\n" unless $x;
-	$x-> autoflush(1);
 	return $x;
 }
 
 my $t = time;
-for my $id ( 1..$CYCLES) {
+for my $id (1..$CYCLES) {
 	this lambda {
 		my $sock = sock;
 		context $sock;
 		writable {
 			print $sock "can write $id\n";
-		readable {
 			close $sock;
-		}};
+		};
 	};
 	this-> wait;
 }

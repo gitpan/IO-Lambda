@@ -1,4 +1,4 @@
-# $Id: Lambda.pm,v 1.151 2009/01/16 17:10:42 dk Exp $
+# $Id: Lambda.pm,v 1.154 2009/01/21 12:57:41 dk Exp $
 
 package IO::Lambda;
 
@@ -17,7 +17,7 @@ use vars qw(
 	$THIS @CONTEXT $METHOD $CALLBACK $AGAIN
 	$DEBUG_IO $DEBUG_LAMBDA %DEBUG
 );
-$VERSION     = '1.04';
+$VERSION     = '1.05';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -1074,7 +1074,7 @@ sub par
 	lambda {
 		my @q = @_;
 		my @ret;
-		$max = @q if $max < 0 or $max > @q;
+		$max = @q if $max < 1 or $max > @q;
 		context map {
 			lambda {
 				return unless @q;
@@ -2007,6 +2007,14 @@ The outermost tail callback will be called twice: first time in the normal cours
 and second time as a result of the C<again> call. C<restartable> and C<again> thus provide
 a kind of restartable continuations.
 
+Important: C<restartable> is a somewhat dangerous procedure, because it can
+create situations where C<@frame> holds a reference to a callback, and the
+callback holds a reference to C<@frame>. This setup creates a circular
+reference, that perl guaranteedly wouldn't resolve, thus resulting in memory
+leaks.  To avoid this effect, C<@frame> that holds result of C<restartable>
+should be cleaned explicitly when C<again(@frame)> is not called, and execution
+leaves the callback. (Thanks to Ben Tilly for bringing up the issue).
+
 =item condition $lambda, $callback, $method, $name
 
 Helper function for creating conditions, either from lambdas 
@@ -2709,9 +2717,10 @@ I wish to thank those who helped me:
 David A. Golden for discussions about names, and his propositions to rename
 some terms into more appropriate, such as "read" to "readable", and "predicate"
 to "condition". Ben Tilly for providing thorough comments to the code in the
-synopsis. Rocco Caputo for optimizing the POE benchmark script. Randall L.
-Schwartz, Brock Wilcox, and zby@perlmonks helped me to understand how the
-documentation for the module could be made better.
+synopsis, bringing up various issues, and for valuable discussions. Rocco
+Caputo for optimizing the POE benchmark script. Randall L.  Schwartz, Brock
+Wilcox, and zby@perlmonks helped me to understand how the documentation for the
+module could be made better.
 
 All the good people on perlmonks.org and perl conferences, who invested their
 time into understanding the module.

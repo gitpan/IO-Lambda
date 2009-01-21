@@ -1,4 +1,4 @@
-# $Id: HTTP.pm,v 1.44 2009/01/08 15:23:26 dk Exp $
+# $Id: HTTP.pm,v 1.46 2009/01/21 10:40:19 dk Exp $
 package IO::Lambda::HTTP;
 use vars qw(@ISA @EXPORT_OK $DEBUG);
 @ISA = qw(Exporter);
@@ -326,15 +326,19 @@ sub handle_request
 {
 	my ( $self, $req) = @_;
 
-	# fixup path
-	if (( $req-> protocol || '') =~ /http\/1.\d/i) {
-		my $u = $req-> uri;
-		$req-> uri( $u-> path);
-	}
-
 	lambda {
 		$self-> {buf} = '';
+
+		# fixup path - otherwise LWP generates request as GET http://hostname/uri HTTP/1.1
+		# which not all servers understand
+		my $uri;
+		if (( $req-> protocol || '') =~ /http\/1.\d/i) {
+			$uri = $req-> uri;
+			$req-> uri( $uri-> path);
+		}
 		context $self-> handle_request_in_buffer( $req);
+		$req-> uri($uri) if defined $uri;
+
 		if ( $DEBUG) {
 			warn "request sent\n";
 			warn $req-> as_string . "\n" if $DEBUG > 1;
@@ -436,8 +440,6 @@ sub http_read_chunked
 	pos( $self-> {buf} ) = $offset;
 	context @ctx = $self-> http_read( qr/\G[^\r\n]+\r?\n/i);
 	state size => tail {
-		# save this lambda frame
-		@frame = restartable;
 		# got error
 		my $line = shift;
 		return undef, shift unless defined $line;
@@ -451,11 +453,17 @@ sub http_read_chunked
 		my $size = hex $line;
 		warn "reading chunk $size bytes\n" if $DEBUG;
 		return 1 unless $size;
+		
+		# save this lambda frame
+		@frame = restartable;
 
 	# read the chunk itself
 	context $self-> http_read( $size);
 	state chunk => tail {
-		return undef, shift unless shift;
+		unless ( shift ) {
+			undef @frame; # break circular reference
+			return undef, shift;
+		}
 		$offset += $size + 2; # 2 for CRLF
 		pos( $self-> {buf} ) = $offset;
 		warn "chunk $size bytes ok\n" if $DEBUG;
