@@ -1,5 +1,3 @@
-# $Id: Lambda.pm,v 1.156 2009/01/29 16:29:12 dk Exp $
-
 package IO::Lambda;
 
 use Carp;
@@ -15,9 +13,9 @@ use vars qw(
 	@EXPORT_OK %EXPORT_TAGS	@EXPORT_CONSTANTS @EXPORT_LAMBDA @EXPORT_STREAM
 	@EXPORT_DEV @EXPORT_MISC @EXPORT_FUNC
 	$THIS @CONTEXT $METHOD $CALLBACK $AGAIN
-	$DEBUG_IO $DEBUG_LAMBDA %DEBUG
+	$DEBUG_IO $DEBUG_LAMBDA $DEBUG_CALLER %DEBUG
 );
-$VERSION     = '1.06';
+$VERSION     = '1.07';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -63,6 +61,7 @@ if ( exists $ENV{IO_LAMBDA_DEBUG}) {
 	}
 	$DEBUG_IO     = $DEBUG{io}     || 0;
 	$DEBUG_LAMBDA = $DEBUG{lambda} || 0;
+	$DEBUG_CALLER = $DEBUG{caller} || 0;
 	$IO::Lambda::Loop::DEFAULT = $DEBUG{loop} if $DEBUG{loop};
 	$SIG{__DIE__} = sub {
 		return if $^S;
@@ -80,7 +79,8 @@ use constant WATCH_CANCEL    => 1;
 use constant WATCH_DEADLINE  => 2;
 use constant WATCH_LAMBDA    => 2;
 use constant WATCH_CALLBACK  => 3;
-	
+
+use constant WATCH_CALLER    => 4;
 use constant WATCH_IO_HANDLE => 4;
 use constant WATCH_IO_FLAGS  => 5;
 
@@ -226,6 +226,7 @@ sub watch_lambda
 		$callback,
 	];
 	weaken $rec->[0];
+	$rec-> [WATCH_CALLER] = Carp::shortmess if $DEBUG_CALLER;
 	push @{$self-> {in}}, $rec;
 	push @{$EVENTS{"$lambda"}}, $rec;
 
@@ -666,7 +667,7 @@ sub lambda(&)
 		local $METHOD   = \&_lambda_restart;
 		$cb ? $cb-> (@_) : @_;
 	});
-	$l-> {caller} = join(':', (caller)[1,2]) if $DEBUG_LAMBDA;
+	$l-> {caller} = join(':', (caller)[1,2]) if $DEBUG_CALLER;
 	$l;
 }
 
@@ -675,7 +676,7 @@ sub _subname
 	subname(
 		caller(1 + ($_[2] || 0)) .  '::_'.  $_[0], 
 		$_[1]
-	) if $_[1] and not $AGAIN; 
+	) if $DEBUG_CALLER and $_[1] and not $AGAIN; 
 	return $_[1];
 }
 
@@ -700,14 +701,14 @@ sub get_frame   { ( $THIS, $METHOD, $CALLBACK, @CONTEXT) }
 sub swap_frame  { my @f = get_frame; set_frame(@_); @f }
 sub clear       { set_frame() }
 
-# exceptions
+# exceptions and backtracing
 sub catch(&$)
 {
 	my ( $cb, $event) = @_;
 	my $who = (caller(1))[3];
 	my @ctx = @CONTEXT;
 	$event->[WATCH_CANCEL] = $cb ? sub {
-		local *__ANON__ = "$who\:\:catch";
+		local *__ANON__ = "$who\:\:catch" if $DEBUG_CALLER;
 		$THIS     = shift;
 		@CONTEXT  = @ctx;
 		$METHOD   = undef;
@@ -715,6 +716,66 @@ sub catch(&$)
 		$cb-> (@_);
 	} : undef;
 	return $event;
+}
+
+sub callers      { grep { $_[0] == $_-> [WATCH_LAMBDA] } map { @$_ } values %EVENTS }
+sub callers_tree { map  { [ $_, callers_tree( $_->[WATCH_OBJ] ) ] } shift-> callers }
+sub callers_tracks
+{
+	my @tracks = shift-> callers_tree;
+	my (@finished, @current, @stack);
+	while (@stack or @tracks) {
+#		warn "next round: t=@tracks\n";
+		if ( @tracks) {
+			my $p = shift @tracks;
+			push @stack, [ @current ], [ @tracks ]
+				if @tracks;
+#			warn "pushcurr t=$p -> ev=$p->[0]:l=$p->[0]->[WATCH_OBJ]\n";
+			push @current, shift @$p;
+			@tracks = @$p;
+		} else {
+			push @finished, [ @current ] if @current;
+#			warn "b done: ev=@current\n";
+			@tracks  = @{ pop @stack };
+			@current = @{ pop @stack };
+		}
+	}
+	push @finished, [ @current ] if @current;
+#	warn "b really done: ev=@current\n";
+	return @finished;
+}
+
+sub backtrace
+{
+	my $self = $_[0];
+	my $out = '';
+	my $ch  = 1;
+	for (( $self-> backtrace_events(chains => 1)) x 2) {
+		if ( $DEBUG_CALLER) {
+			$out .= "#$ch/1: lambda(". _o($self) . ')';
+			$out .= " created at $self->{caller}" if $self->{caller};
+			$out .= " awaited by\n";
+		} else {
+			$out .= "#$ch: lambda(". _o($self) . ') ';
+		}
+		my $depth = 1;
+		for ( @$_ ) {
+			$depth++;
+			$out .= "\t #$ch/$depth: " if $DEBUG_CALLER;
+			$out .= 'lambda(' . _o($_->[WATCH_OBJ]) . ')';
+			$out .= " created at $_->[WATCH_OBJ]->{caller}"
+				if $_->[WATCH_OBJ]->{caller};
+			if ( defined $_-> [WATCH_CALLER]) {
+				$out .= " awaited";
+				$out .= $_->[WATCH_CALLER];
+			} else {
+				$out .= " ";
+			}
+		}
+		$out .= "\n";
+		$ch++;
+	}
+	return $out;
 }
 	
 END { ( $THIS, $METHOD, $CALLBACK, @CONTEXT) = (); }
@@ -733,11 +794,11 @@ sub state($)
 sub add_watch
 {
 	my ($self, $cb, $method, $flags, $handle, $deadline, @ctx) = @_;
-	my $who = (caller(1))[3];
+	my $who = (caller(1))[3] if $DEBUG_CALLER;
 	$self-> watch_io(
 		$flags, $handle, $deadline,
 		sub {
-			local *__ANON__ = "$who\:\:callback";
+			local *__ANON__ = "$who\:\:callback" if $DEBUG_CALLER;
 			$THIS     = shift;
 			@CONTEXT  = @ctx;
 			$METHOD   = $method;
@@ -787,11 +848,11 @@ sub writable(&)
 sub add_timer
 {
 	my ($self, $cb, $method, $deadline, @ctx) = @_;
-	my $who = (caller(1))[3];
+	my $who = (caller(1))[3] if $DEBUG_CALLER;
 	$self-> watch_timer(
 		$deadline,
 		sub {
-			local *__ANON__ = "$who\:\:callback";
+			local *__ANON__ = "$who\:\:callback" if $DEBUG_CALLER;
 			$THIS     = shift;
 			@CONTEXT  = @ctx;
 			$METHOD   = $method;
@@ -813,11 +874,11 @@ sub timeout(&)
 sub add_tail
 {
 	my ($self, $cb, $method, $lambda, @ctx) = @_;
-	my $who = (caller(1))[3];
+	my $who = (caller(1))[3] if $DEBUG_CALLER;
 	$self-> watch_lambda(
 		$lambda,
 		$cb ? sub {
-			local *__ANON__ = "$who\:\:callback";
+			local *__ANON__ = "$who\:\:callback" if $DEBUG_CALLER;
 			$THIS     = shift;
 			@CONTEXT  = @ctx;
 			$METHOD   = $method;
@@ -847,12 +908,17 @@ sub condition
 		if defined($name) and $THIS-> {override}->{$name};
 	
 	my @ctx = @CONTEXT;
-	my $who = defined($name) ? $name : (caller(1))[3];
-	_subname($who, $cb, 2) if $cb and not $AGAIN;
+
+	my $who;
+	if ( $DEBUG_CALLER) {
+		$who = defined($name) ? $name : (caller(1))[3];
+		_subname($who, $cb, 2);
+	}
+
 	$THIS-> watch_lambda( 
 		$self, 
 		$cb ? sub {
-			local *__ANON__ = "$who\:\:callback";
+			local *__ANON__ = "$who\:\:callback" if $DEBUG_CALLER;
 			$THIS     = shift;
 			@CONTEXT  = @ctx;
 			$METHOD   = $method;
@@ -2544,6 +2610,15 @@ is therefore better to be written as
       ...
    }}
 
+=item callers
+
+Returns event records that watch for the lambda.
+
+=item backtrace
+
+Returns a string representation of thread of events that leads to the current
+lambda. To increase verbosity, add debug flag "caller".
+
 =back
 
 =head1 MISCELLANEOUS
@@ -2617,9 +2692,36 @@ For example,
       env IO_LAMBDA_DEBUG=io=2,http perl script.pl
 
 displays I/O debug messages from C<IO::Lambda> (with extra verbosity) and from
-C<IO::Lambda::HTTP>. C<IO::Lambda> responds for the following keys: I<io> (async
-operations), I<lambda> (sync operations), I<die> (stack trace), I<loop> (set
-loop module). Keys recognized for the other modules:
+C<IO::Lambda::HTTP>. C<IO::Lambda> responds for the following keys:
+
+=over
+
+=item io
+
+Prints debugging information about file and timeout asynchronous events.
+
+=item lambda
+
+Print debugging information about event flow of lambda objects,
+where one object waits for another, lambda being cancelled, finished, etc.
+
+=item caller
+
+Increase verbosity of I<lambda> by storing information about which line
+invoked object creation and subscription. Especially valuable for the
+C<backtrace> function.
+
+=item die 
+
+If set, fatal errors dump the stack trace.
+
+=item loop=MODULE
+
+Sets loop module, one of: Select, AnyEvent, Prima.
+
+=back
+
+Keys recognized for the other modules:
 I<select,dbi,http,https,signal,message,thread,fork,poll,flock>.
 
 =head2 Mailing list
@@ -2637,11 +2739,15 @@ A single-process TCP client and server; server echoes back everything is sent by
 the client. 500 connections sequentially created, instructed to send a single
 line to the server, and destroyed.
 
-                        2.4GHz x86-64 linux 1.2GHz win32
-  Lambda using select       0.694 sec        6.364 sec
-  Lambda using AnyEvent     0.684 sec        7.031 sec
-  Raw sockets using select  0.145 sec        4.141 sec
-  POE using select          5.349 sec       14.887 sec
+                         2.4GHz x86-64 linux 1.2GHz win32
+  Lambda/select              0.697            7.468
+  Lambda/select, optimized   0.257            5.273
+  Lambda/AnyEvent            0.648            8.175
+  Lambda/AnyEvent, optimized                  7.087
+  Raw sockets using select   0.149            4.859
+  POE/select, components     1.185           12.306
+  POE/select, raw sockets    0.382            6.233
+  POE/select, optimized      0.770            7.510
 
 See benchmarking code in F<eg/bench>.
 
