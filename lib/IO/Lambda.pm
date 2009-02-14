@@ -15,7 +15,7 @@ use vars qw(
 	$THIS @CONTEXT $METHOD $CALLBACK $AGAIN $SIGTHROW
 	$DEBUG_IO $DEBUG_LAMBDA $DEBUG_CALLER %DEBUG
 );
-$VERSION     = '1.08';
+$VERSION     = '1.09';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -26,7 +26,7 @@ $VERSION     = '1.08';
 	sysreader syswriter getline readbuf writebuf
 );
 @EXPORT_LAMBDA = qw(
-	this context lambda again state restartable catch
+	this context lambda again state restartable catch finally
 	io readable writable rwx timeout tail tails tailo any_tail
 );
 @EXPORT_FUNC = qw(
@@ -723,6 +723,7 @@ sub catch(&$)
 	my ( $cb, $event) = @_;
 	my $who = (caller(1))[3];
 	my @ctx = @CONTEXT;
+	croak "catch callback already defined" if $event-> [WATCH_CANCEL];
 	$event->[WATCH_CANCEL] = $cb ? sub {
 		local *__ANON__ = "$who\:\:catch" if $DEBUG_CALLER;
 		$THIS     = shift;
@@ -736,6 +737,20 @@ sub catch(&$)
 	$event->[WATCH_CALLBACK] = $event->[WATCH_CANCEL]
 		if $event->[WATCH_CALLBACK] == \&_throw;
 	
+	return $event;
+}
+
+sub finally(&$)
+{
+	my ( $cb, $event) = @_;
+	croak "callback cannot be empty" unless $cb;
+	my ( $a, $b) = @$event[WATCH_CALLBACK,WATCH_CANCEL];
+	$event-> [WATCH_CALLBACK] = sub {
+		$cb->($_[0], $a ? $a->($_[0]) : ());
+	};
+	$event-> [WATCH_CANCEL] = sub {
+		$cb->($_[0], $b ? $b->($_[0]) : ());
+	};
 	return $event;
 }
 
@@ -1763,9 +1778,12 @@ dynamically.
 The new event listeners can be created either by explicitly calling condition,
 or by restarting the last condition with the C<again> call. For example, code
 
-     readable { int(rand 2) ? print 1 : again }
+     readable { 
+        print 1;
+	again if int rand(2)
+     }
 
-will print indeterminable number of ones.
+prints indeterminable number of ones.
 
 =head2 Contexts
 
@@ -2099,6 +2117,36 @@ via either C<cancel_event>, C<cancel_all_event>, or C<terminate>:
    } tail {
       $resource-> free;
    }
+
+C<catch> must be invoked after a condition, but in the syntax above that means
+that C<catch> should lexically come before it. If undesirable, use explicit
+event reference:
+
+   my $event = tail { ... };
+   catch   { ... }, $event;
+
+=item finally $coderef, $event
+
+Registers $coderef on $event, that is called when $event is finished,
+no matter whether normally or was aborted:
+
+   my $resource = acquire;
+   context lambda { .. $resource .. };
+   finally {
+      $resource-> free;
+   } catch {
+      print "cannot";
+   } tail {
+      print "can";
+   }
+
+C<finally> must be invoked after both C<catch> and the condition watched, but
+in the syntax above that means that C<finally> should lexically come first. If
+undesirable, use explicit event reference:
+
+   my $event = tail { ... };
+   catch   { ... }, $event;
+   finally { ... }, $event;
 
 =back
 
@@ -2746,9 +2794,11 @@ Sets loop module, one of: Select, AnyEvent, Prima.
 Keys recognized for the other modules:
 I<select,dbi,http,https,signal,message,thread,fork,poll,flock>.
 
-=head2 Mailing list
+=head2 Online information
 
-I<io-lambda-general at lists.sourceforge.net>, thanks to sourceforge.
+Project homepage: L<http://iolambda.karasik.eu.org/>
+
+Mailing list: I<io-lambda-general at lists.sourceforge.net>, thanks to sourceforge.
 Subscribe by visiting L<https://lists.sourceforge.net/lists/listinfo/io-lambda-general>.
 
 =head2 Benchmarks
@@ -2873,7 +2923,7 @@ dedicated collaboration.
 
 David A. Golden for discussions about names, and his propositions to rename
 some terms into more appropriate, such as "read" to "readable", and "predicate"
-to "condition". Rocco Caputo for optimizing the POE benchmark script. Randall
+to "condition". Rocco Caputo for optimizing the POE benchmark script. Randal
 L. Schwartz, Brock Wilcox, and zby@perlmonks helped me to understand how the
 documentation for the module could be made better.
 
