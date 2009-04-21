@@ -1,4 +1,4 @@
-# $Id: SNMP.pm,v 1.17 2009/01/09 12:07:19 dk Exp $
+# $Id: SNMP.pm,v 1.19 2009/04/07 13:37:36 dk Exp $
 package IO::Lambda::SNMP;
 use vars qw(
 	$DEBUG
@@ -70,6 +70,7 @@ sub reshuffle_fds
 	my $resubmitted = 0;
 
 	my ( $timeout, @fds) = SNMP::select_info;
+	@fds = grep { defined } @fds;
 	# kill old handles
 	my %all = map { $_ => 1 } @fds;
 	for my $old ( grep { not exists $all{$_} } keys %ACTIVE_FDS) {
@@ -106,7 +107,7 @@ sub reshuffle_fds
 	}
 
 	# timer
-	$timeout ||= 0; 
+	$timeout ||= 0;
 	if ( $timeout) {
 		my $deadline = time + $timeout;
 		if ( $TIMER_ACTIVE) {

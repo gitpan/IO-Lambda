@@ -1,3 +1,4 @@
+# $Id: Lambda.pm,v 1.167 2009/04/21 09:34:56 dk Exp $
 package IO::Lambda;
 
 use Carp qw(croak);
@@ -15,7 +16,7 @@ use vars qw(
 	$THIS @CONTEXT $METHOD $CALLBACK $AGAIN $SIGTHROW
 	$DEBUG_IO $DEBUG_LAMBDA $DEBUG_CALLER %DEBUG
 );
-$VERSION     = '1.09';
+$VERSION     = '1.10';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -363,6 +364,7 @@ sub io_handler
 		if $nn == @$in or $self != $rec->[WATCH_OBJ];
 
 	_d_in if $DEBUG_IO;
+	local $self-> {cancel} = $rec-> [WATCH_CANCEL];
 	@{$self->{last}} = $rec-> [WATCH_CALLBACK]-> (
 		$self, 
 		(($#$rec == WATCH_IO_FLAGS) ? $rec-> [WATCH_IO_FLAGS] : ()),
@@ -402,6 +404,7 @@ sub lambda_handler
 
 	_d_in if $DEBUG_LAMBDA;
 				
+	local $self-> {cancel} = $rec-> [WATCH_CANCEL];
 	@{$self->{last}} = 
 		$rec-> [WATCH_CALLBACK] ? 
 			$rec-> [WATCH_CALLBACK]-> (
@@ -740,20 +743,6 @@ sub catch(&$)
 	return $event;
 }
 
-sub finally(&$)
-{
-	my ( $cb, $event) = @_;
-	croak "callback cannot be empty" unless $cb;
-	my ( $a, $b) = @$event[WATCH_CALLBACK,WATCH_CANCEL];
-	$event-> [WATCH_CALLBACK] = sub {
-		$cb->($_[0], $a ? $a->($_[0]) : ());
-	};
-	$event-> [WATCH_CANCEL] = sub {
-		$cb->($_[0], $b ? $b->($_[0]) : ());
-	};
-	return $event;
-}
-
 sub _throw
 {
 	my $self = shift;
@@ -805,7 +794,8 @@ sub add_watch
 			$METHOD   = $method;
 			$CALLBACK = $cb;
 			$cb ? $cb-> (@_) : @_;
-		}
+		}, 
+		($AGAIN ? delete($self-> {cancel}) : undef),
 	)
 }
 
@@ -859,7 +849,8 @@ sub add_timer
 			$METHOD   = $method;
 			$CALLBACK = $cb;
 			$cb ? $cb-> (@_) : @_;
-		}
+		},
+		($AGAIN ? delete($self-> {cancel}) : undef),
 	)
 }
 
@@ -878,14 +869,15 @@ sub add_tail
 	my $who = (caller(1))[3] if $DEBUG_CALLER;
 	$self-> watch_lambda(
 		$lambda,
-		$cb ? sub {
+		($cb ? sub {
 			local *__ANON__ = "$who\:\:callback" if $DEBUG_CALLER;
 			$THIS     = shift;
 			@CONTEXT  = @ctx;
 			$METHOD   = $method;
 			$CALLBACK = $cb;
 			$cb-> (@_);
-		} : undef,
+		} : undef),
+		($AGAIN ? delete($self-> {cancel}) : undef),
 	);
 }
 
@@ -2124,29 +2116,6 @@ event reference:
 
    my $event = tail { ... };
    catch   { ... }, $event;
-
-=item finally $coderef, $event
-
-Registers $coderef on $event, that is called when $event is finished,
-no matter whether normally or was aborted:
-
-   my $resource = acquire;
-   context lambda { .. $resource .. };
-   finally {
-      $resource-> free;
-   } catch {
-      print "cannot";
-   } tail {
-      print "can";
-   }
-
-C<finally> must be invoked after both C<catch> and the condition watched, but
-in the syntax above that means that C<finally> should lexically come first. If
-undesirable, use explicit event reference:
-
-   my $event = tail { ... };
-   catch   { ... }, $event;
-   finally { ... }, $event;
 
 =back
 
