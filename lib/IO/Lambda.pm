@@ -1,4 +1,4 @@
-# $Id: Lambda.pm,v 1.167 2009/04/21 09:34:56 dk Exp $
+# $Id: Lambda.pm,v 1.170 2009/07/02 11:34:12 dk Exp $
 package IO::Lambda;
 
 use Carp qw(croak);
@@ -16,7 +16,7 @@ use vars qw(
 	$THIS @CONTEXT $METHOD $CALLBACK $AGAIN $SIGTHROW
 	$DEBUG_IO $DEBUG_LAMBDA $DEBUG_CALLER %DEBUG
 );
-$VERSION     = '1.10';
+$VERSION     = '1.11';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -921,23 +921,6 @@ sub condition
 	);
 }
 
-# tail( $lambda, @param) -- initialize $lambda with @param, and wait for it
-sub tail(&)
-{
-	return $THIS-> override_handler('tail', \&tail, shift)
-		if $THIS-> {override}->{tail};
-	
-	my ( $lambda, @param) = context;
-	$lambda-> reset
-		if $lambda-> is_stopped and $lambda-> autorestart;
-	if ( @param) {
-		$lambda-> call( @param);
-	} else {
-		$lambda-> call unless $lambda-> is_active;
-	}
-	$THIS-> add_tail( _subname(tail => shift), \&tail, $lambda, $lambda, @param);
-}
-
 # dummy sub for empty calls for tails() family
 sub _empty
 {
@@ -951,6 +934,26 @@ sub _empty
 		$cb-> ();
 	}) if $cb;
 }
+
+# tail( $lambda, @param) -- initialize $lambda with @param, and wait for it
+sub tail(&)
+{
+	return $THIS-> override_handler('tail', \&tail, shift)
+		if $THIS-> {override}->{tail};
+	
+	my ( $lambda, @param) = context;
+	return _empty(tail => \&tail, shift) unless $lambda;
+
+	$lambda-> reset
+		if $lambda-> is_stopped and $lambda-> autorestart;
+	if ( @param) {
+		$lambda-> call( @param);
+	} else {
+		$lambda-> call unless $lambda-> is_active;
+	}
+	$THIS-> add_tail( _subname(tail => shift), \&tail, $lambda, $lambda, @param);
+}
+
 
 # tails(@lambdas) -- wait for all lambdas to finish
 sub tails(&)
@@ -2125,8 +2128,8 @@ The whole point of this module is to help building protocols or arbitrary
 complexity in a clear, consequent programming style. Consider how perl's
 low-level C<sysread> and C<syswrite> relate to its higher-level C<readline>,
 where the latter not only does the buffering, but also recognizes C<$/> as
-input record separator.  The section above described lower-level lambda I/
-condition, that are only useful for C<sysread> and C<syswrite>; this section
+input record separator.  The section above described lower-level lambda I/O
+conditions, that are only useful for C<sysread> and C<syswrite>. This section
 tells about higher-level lambdas that relate to these low-level ones, as the
 aforementioned C<readline> relates to C<sysread>.
 
@@ -2167,7 +2170,7 @@ request:
 
 C<getline> reads from C<$handle> to C<$buf>, and wakes up when a new line
 is there. However, what if we need, for example, HTTPS instead of HTTP, where
-reading from socket may involve some writing, and of course some waiting?
+reading from a socket may involve some writing, and of course some waiting?
 Then the first default parameter to getline has to be replaced. By default, 
 
    context getline, $handle, \$buf;

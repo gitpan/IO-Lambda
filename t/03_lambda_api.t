@@ -1,9 +1,9 @@
 #! /usr/bin/perl
-# $Id: 03_lambda_api.t,v 1.15 2009/01/29 16:29:15 dk Exp $
+# $Id: 03_lambda_api.t,v 1.17 2009/07/02 11:30:31 dk Exp $
 
 use strict;
 use warnings;
-use Test::More tests => 16;
+use Test::More tests => 17;
 use IO::Lambda qw(:lambda);
 
 alarm(10);
@@ -89,6 +89,7 @@ ok( '13' eq this-> wait, 'any_tail');
 
 SKIP: {
 	skip "select(file) doesn't work on win32", 3 if $^O =~ /win32/i;
+	skip "select(file) doesn't work with AnyEvent", 3 if $IO::Lambda::LOOP =~ /AnyEvent/;
 	skip "cannot open $0:$!", 3 unless open FH, '<', $0;
 
 this lambda {
@@ -125,3 +126,9 @@ this lambda {
 this-> start;
 this-> terminate('C');
 ok('B' eq this-> wait, 'catch');
+
+this lambda {
+	context undef;
+	tail { return 5 };
+};
+ok( 5 == this-> wait, 'no tail');
