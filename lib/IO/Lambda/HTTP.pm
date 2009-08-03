@@ -1,4 +1,4 @@
-# $Id: HTTP.pm,v 1.47 2009/06/18 08:08:52 dk Exp $
+# $Id: HTTP.pm,v 1.50 2009/08/03 07:25:36 dk Exp $
 package IO::Lambda::HTTP;
 use vars qw(@ISA @EXPORT_OK $DEBUG);
 @ISA = qw(Exporter);
@@ -61,6 +61,14 @@ sub new
 	return $self-> handle_redirect( $req);
 }
 
+# HTTP::Response features methods base() and request() that we need to set as well
+sub finalize_response
+{
+	my ( $self, $req, $response) = @_;
+	$response-> request($req);
+	return $response;
+}
+
 # reissue the request, if necessary, because of 30X or 401 errors
 sub handle_redirect
 {
@@ -90,8 +98,13 @@ sub handle_redirect
 			$was_failed_auth = 0;
 			return 'too many redirects' 
 				if ++$was_redirected > $self-> {max_redirect};
-			
-			$req-> uri( $response-> header('Location'));
+
+			my $uri = URI-> new($response-> header('Location'));
+			$uri-> scheme( $req-> uri-> scheme)
+				unless defined $uri-> scheme;
+			$uri-> host( $req-> uri-> host)
+				unless defined $uri-> host;
+			$req-> uri($uri);
 			$req-> headers-> header( Host => $req-> uri-> host);
 
 			warn "redirect to " . $req-> uri . "\n" if $DEBUG;
@@ -112,9 +125,9 @@ sub handle_redirect
 
 				# start from beginning, from handle_connection;
 				this-> start; 
-			} : $response;
+			} : $self-> finalize_response($req, $response);
 		} else {
-			return $response;
+			return $self-> finalize_response($req, $response);
 		}
 	}};
 }
@@ -361,6 +374,7 @@ sub handle_request_in_buffer
 {
 	my ( $self, $req) = @_;
 
+	my $method = $req-> method;
 	lambda {
 		# send request
 		$req = $req-> as_string("\x0d\x0a");
@@ -403,6 +417,8 @@ sub handle_request_in_buffer
 		# Connection: close
 		my $c = lc( $headers-> header('Connection') || '');
 		$self-> {close_connection} = $c =~ /^close\s*$/i;
+
+		return 1 if $method eq 'HEAD';
 
 		return $self-> http_read_body( length $line, $headers);
 	}}}}}
@@ -453,18 +469,19 @@ sub http_read_chunked
 		my $size = hex $line;
 		warn "reading chunk $size bytes\n" if $DEBUG;
 		return 1 unless $size;
+		$size += 2; # CRLF
 		
 		# save this lambda frame
 		@frame = restartable;
 
 	# read the chunk itself
-	context $self-> http_read( $size);
+	context $self-> http_read( $offset + $size);
 	state chunk => tail {
 		unless ( shift ) {
 			undef @frame; # break circular reference
 			return undef, shift;
 		}
-		$offset += $size + 2; # 2 for CRLF
+		$offset += $size;
 		pos( $self-> {buf} ) = $offset;
 		warn "chunk $size bytes ok\n" if $DEBUG;
 		context @ctx;
