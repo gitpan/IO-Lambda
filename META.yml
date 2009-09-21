@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:                IO-Lambda
-version:             1.12
+version:             1.13
 abstract:            non-blocking I/O as lambda calculus
 license:             ~
 author:              

@@ -1,4 +1,4 @@
-# $Id: Lambda.pm,v 1.172 2009/08/03 07:27:13 dk Exp $
+# $Id: Lambda.pm,v 1.175 2009/09/18 09:38:47 dk Exp $
 package IO::Lambda;
 
 use Carp qw(croak);
@@ -16,7 +16,7 @@ use vars qw(
 	$THIS @CONTEXT $METHOD $CALLBACK $AGAIN $SIGTHROW
 	$DEBUG_IO $DEBUG_LAMBDA $DEBUG_CALLER %DEBUG
 );
-$VERSION     = '1.12';
+$VERSION     = '1.13';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -435,10 +435,12 @@ sub cancel_event
 	$LOOP-> remove_event($rec) if $LOOP;
 	@{$self-> {in}} = grep { $_ != $rec } @{$self-> {in}};
 
-	my $arr = $EVENTS{$rec->[WATCH_LAMBDA]};
-	if ( $arr) {
-		@$arr = grep { $_ != $rec } @$arr;
-		delete $EVENTS{$rec->[WATCH_LAMBDA]} unless @$arr;
+	if ($rec->[WATCH_LAMBDA] and ref($rec->[WATCH_LAMBDA])) {
+		my $arr = $EVENTS{$rec->[WATCH_LAMBDA]};
+		if ( $arr) {
+			@$arr = grep { $_ != $rec } @$arr;
+			delete $EVENTS{$rec->[WATCH_LAMBDA]} unless @$arr;
+		}
 	}
 	@$rec = ();
 
@@ -2341,6 +2343,10 @@ where C<$lambda> accepts three parameters, can be rewritten as
    $m = curry { $lambda, $a, $b };
    context $m, $c;
    tail { ... }
+
+Another example, tie C<readbuf> with a filehandle and buffer:
+
+   my $readbuf = curry { readbuf, $fh, \(my $buf = '') };
 
 =item seq() :: @a -> @b
 
