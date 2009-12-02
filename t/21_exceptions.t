@@ -1,5 +1,5 @@
 #! /usr/bin/perl
-# $Id: 21_exceptions.t,v 1.4 2009/04/21 09:34:56 dk Exp $
+# $Id: 21_exceptions.t,v 1.6 2009/12/01 23:01:52 dk Exp $
 
 alarm(10);
 
@@ -8,7 +8,7 @@ use warnings;
 use Test::More;
 use IO::Lambda qw(:lambda);
 
-plan tests => 22;
+plan tests => 25;
 
 # just throw
 sub throw
@@ -79,6 +79,7 @@ ok( $sig, 'sigthrow on');
 
 $sig = 0;
 IO::Lambda-> sigthrow(undef);
+throw-> wait;
 ok( 0 == $sig, 'sigthrow off');
 
 IO::Lambda::sigthrow( sub { $sig++ });
@@ -87,6 +88,7 @@ ok( $sig, 'sigthrow on');
 
 $sig = 0;
 IO::Lambda::sigthrow(undef);
+throw-> wait;
 ok( 0 == $sig, 'sigthrow off');
 
 # stack
@@ -139,3 +141,43 @@ lambda { context 0.1; &timeout }-> wait;
 undef $x;
 IO::Lambda::clear;
 ok( $ret == 7, 'catch is restartable');
+
+
+# check catch propagations
+$ret = 0;
+$x = lambda {
+	context lambda {};
+	catch {
+		$ret |= 1;
+		this-> call_again;
+	} tail {
+		$ret |= 2 if this-> is_cancelling;
+	}
+};
+$x-> start;
+undef $x;
+ok($ret == 3, 'catch restarts event');
+
+$ret = 0;
+$x = lambda {
+	context lambda {};
+	autocatch tail { $ret |= 2 if this-> is_cancelling };
+};
+$x-> start;
+undef $x;
+ok($ret == 2, 'autocatch can restart');
+
+# autocatch indeed rethrows
+$ret = 0;
+$x = lambda {
+	context lambda {};
+	autocatch tail { $ret |= 2 if this-> is_cancelling };
+};
+$x-> start;
+
+lambda {
+	context $x;
+	catch { $ret |= 4; } tail {};
+	$x-> throw(42);
+}-> wait;
+ok( $ret == 6, 'autocatch can rethrow');
