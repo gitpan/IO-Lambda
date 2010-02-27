@@ -1,4 +1,4 @@
-# $Id: HTTP.pm,v 1.51 2009/12/01 23:01:52 dk Exp $
+# $Id: HTTP.pm,v 1.54 2010/02/27 04:25:08 dk Exp $
 package IO::Lambda::HTTP;
 use vars qw(@ISA @EXPORT_OK $DEBUG);
 @ISA = qw(Exporter);
@@ -99,12 +99,10 @@ sub handle_redirect
 			return 'too many redirects' 
 				if ++$was_redirected > $self-> {max_redirect};
 
-			my $uri = URI-> new($response-> header('Location'));
-			$uri-> scheme( $req-> uri-> scheme)
-				unless defined $uri-> scheme;
-			$uri-> host( $req-> uri-> host)
-				unless defined $uri-> host;
-			$req-> uri($uri);
+			$req-> uri( URI-> new_abs(
+				$response-> header('Location'),
+				$req-> uri
+			));
 			$req-> headers-> header( Host => $req-> uri-> host);
 
 			warn "redirect to " . $req-> uri . "\n" if $DEBUG;
@@ -212,12 +210,15 @@ sub prepare_transport
 	return;
 }
 
+# returns static lambda that reads from socket until a condition (see sysreader) is satisfied
 sub http_read
 {
 	my ( $self, $cond) = @_;
 	return $self-> {reader}, $self-> {socket}, \ $self-> {buf}, $cond, $self-> {deadline};
 }
 
+# read from socket until a condition (see sysreader) is satisfied
+# after this call no communication should happen
 sub http_tail
 {
 	my ( $self, $cond) = @_;
@@ -239,7 +240,7 @@ sub socket
 }
 
 # Connect to the remote, wait for protocol to finish, and
-# close the connection if needed. Returns HTTP::Reponse object on success
+# close the connection if needed. Returns HTTP::Response object on success
 sub handle_connection
 {
 	my ( $self, $req) = @_;
@@ -334,7 +335,7 @@ sub handle_connection
 }
 
 # Execute single http request over an established connection.
-# Returns either HTTP::Response object, or error string
+# Returns either a HTTP::Response object, or an error string
 sub handle_request
 {
 	my ( $self, $req) = @_;
@@ -456,9 +457,8 @@ sub http_read_chunked
 	pos( $self-> {buf} ) = $offset;
 	context @ctx = $self-> http_read( qr/\G[^\r\n]+\r?\n/i);
 	state size => tail {
-		# got error
 		my $line = shift;
-		return undef, shift unless defined $line;
+		return undef, shift unless defined $line; # got error
 
 		# advance
 		substr( $self-> {buf}, $offset, length($line), '');
@@ -481,11 +481,15 @@ sub http_read_chunked
 			undef @frame; # break circular reference
 			return undef, shift;
 		}
-		$offset += $size;
+
+		$offset += $size - 2;
+		substr( $self->{buf}, $offset, 2, '' ); # remove CRLF
 		pos( $self-> {buf} ) = $offset;
 		warn "chunk $size bytes ok\n" if $DEBUG;
+
 		context @ctx;
 		again( @frame);
+		undef @frame; # break circular reference
 	}};
 }
 
