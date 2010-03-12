@@ -1,4 +1,4 @@
-# $Id: Lambda.pm,v 1.182 2010/02/27 14:20:34 dk Exp $
+# $Id: Lambda.pm,v 1.184 2010/03/12 22:11:57 dk Exp $
 package IO::Lambda;
 
 use Carp qw(croak);
@@ -16,7 +16,7 @@ use vars qw(
 	$THIS @CONTEXT $METHOD $CALLBACK $AGAIN $SIGTHROW
 	$DEBUG_IO $DEBUG_LAMBDA $DEBUG_CALLER %DEBUG
 );
-$VERSION     = '1.16';
+$VERSION     = '1.17';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -2677,13 +2677,13 @@ Can be used in the following fashion:
 
 =item is_cancelling
 
-Returns true if running withing a C<catch> block.
+Returns true if running within a C<catch> block.
 
 =item call_again(@param)
 
 To be called only from within a C<catch> block. Calls the normal
 callback that would be called if the event wouldn't be cancelled.
-C<@param> is passed to teh callback.
+C<@param> is passed to the callback.
 
 =item throw(@error)
 

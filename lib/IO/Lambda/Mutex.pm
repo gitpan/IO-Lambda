@@ -1,4 +1,4 @@
-# $Id: Mutex.pm,v 1.10 2009/12/19 17:47:41 dk Exp $
+# $Id: Mutex.pm,v 1.12 2010/03/02 23:22:46 dk Exp $
 package IO::Lambda::Mutex;
 use vars qw($DEBUG @ISA);
 $DEBUG = $IO::Lambda::DEBUG{mutex} || 0;
@@ -103,6 +103,20 @@ sub mutex(&)
 	$self-> waiter($timeout)-> condition(shift, \&mutex, 'mutex')
 }
 
+sub pipeline
+{
+	my ( $self, $lambda, $timeout) = @_;
+	lambda {
+		my @p = @_;
+		context $self-> waiter($timeout);
+	tail {
+		context $lambda, @p;
+	autocatch tail {
+		$self-> release;
+		return @_;
+	}}}
+}
+
 
 1;
 
@@ -205,6 +219,16 @@ the mutex was acquired successfully, or the error string.
 If C<$timeout> is defined, and by the time it is expired the mutex
 could not be obtained, the lambda is removed from the queue, and
 returned error value is 'timeout'.
+
+Note, that after C<waiter> succeeds, a C<release> call is needed
+should mutex be reused. See C<pipeline> method for automatic mutex
+release.
+
+=item pipeline($lambda, $timeout = undef)
+
+Creates a new lambda, that wraps over C<$lambda> so that it is executed
+any after mutex had been obtained. Also, as soon as C<$lambda> is finished,
+the mutex is released, thus allowing others to use it.
 
 =item remove($lambda)
 

@@ -1,5 +1,5 @@
 #! /usr/bin/perl
-# $Id: 20_mutex.t,v 1.3 2009/02/17 08:36:16 dk Exp $
+# $Id: 20_mutex.t,v 1.5 2010/03/02 23:22:47 dk Exp $
 
 alarm(10);
 
@@ -9,7 +9,7 @@ use Test::More;
 use IO::Lambda qw(:lambda);
 use IO::Lambda::Mutex;
 
-plan tests => 12;
+plan tests => 13;
 
 # basic stuff
 my $mutex = IO::Lambda::Mutex-> new;
@@ -66,3 +66,13 @@ $mutex-> remove($waiter);
 $waiter-> terminate;
 ok( $mutex-> is_free, 'deadlock prevention 2');
 
+$flag = '';
+lambda {
+	context 
+		$mutex-> pipeline( lambda { $flag .= 1 if $mutex-> is_taken } ),
+		$mutex-> pipeline( lambda { $flag .= 2 if $mutex-> is_taken } ),
+		$mutex-> pipeline( lambda { $flag .= 3 if $mutex-> is_taken } )
+		;
+	&tails();
+}-> wait(0);
+ok( $flag == 123, 'pipeline');
