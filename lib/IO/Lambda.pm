@@ -1,4 +1,4 @@
-# $Id: Lambda.pm,v 1.188 2010/04/06 10:56:02 dk Exp $
+# $Id: Lambda.pm,v 1.190 2011/07/07 17:20:07 dk Exp $
 package IO::Lambda;
 
 use Carp qw(croak);
@@ -16,7 +16,7 @@ use vars qw(
 	$THIS @CONTEXT $METHOD $CALLBACK $AGAIN $SIGTHROW
 	$DEBUG_IO $DEBUG_LAMBDA $DEBUG_CALLER %DEBUG
 );
-$VERSION     = '1.20';
+$VERSION     = '1.21';
 @ISA         = qw(Exporter);
 @EXPORT_CONSTANTS = qw(
 	IO_READ IO_WRITE IO_EXCEPTION 
@@ -809,7 +809,8 @@ sub backtrace
 sub add_watch
 {
 	my ($self, $cb, $method, $flags, $handle, $deadline, @ctx) = @_;
-	my $who = (caller(1))[3] if $DEBUG_CALLER;
+	my $who;
+	$who = (caller(1))[3] if $DEBUG_CALLER;
 	$self-> watch_io(
 		$flags, $handle, $deadline,
 		sub {
@@ -864,7 +865,8 @@ sub writable(&)
 sub add_timer
 {
 	my ($self, $cb, $method, $deadline, @ctx) = @_;
-	my $who = (caller(1))[3] if $DEBUG_CALLER;
+	my $who;
+	$who = (caller(1))[3] if $DEBUG_CALLER;
 	$self-> watch_timer(
 		$deadline,
 		sub {
@@ -891,7 +893,8 @@ sub timeout(&)
 sub add_tail
 {
 	my ($self, $cb, $method, $lambda, @ctx) = @_;
-	my $who = (caller(1))[3] if $DEBUG_CALLER;
+	my $who;
+	$who = (caller(1))[3] if $DEBUG_CALLER;
 	$self-> watch_lambda(
 		$lambda,
 		($cb ? sub {
