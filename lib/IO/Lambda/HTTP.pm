@@ -1,4 +1,4 @@
-# $Id: HTTP.pm,v 1.56 2010/04/05 18:18:48 dk Exp $
+# $Id: HTTP.pm,v 1.59 2012/01/13 06:16:28 dk Exp $
 package IO::Lambda::HTTP;
 use vars qw(@ISA @EXPORT_OK $DEBUG);
 @ISA = qw(Exporter);
@@ -342,15 +342,7 @@ sub handle_request
 	lambda {
 		$self-> {buf} = '';
 
-		# fixup path - otherwise LWP generates request as GET http://hostname/uri HTTP/1.1
-		# which not all servers understand
-		my $uri;
-		if (( $req-> protocol || '') =~ /http\/1.\d/i) {
-			$uri = $req-> uri;
-			$req-> uri( $uri-> path);
-		}
 		context $self-> handle_request_in_buffer( $req);
-		$req-> uri($uri) if defined $uri;
 
 		if ( $DEBUG) {
 			warn "request sent\n";
@@ -375,12 +367,25 @@ sub handle_request_in_buffer
 	my ( $self, $req) = @_;
 
 	my $method = $req-> method;
+
+	# fixup path - otherwise LWP generates request as GET http://hostname/uri HTTP/1.1
+	# which not all servers understand
+	my ($req_line, $save_uri);
+	if (!$self-> {proxy} && ( $req-> protocol || '') =~ /http\/1.\d/i) {
+		$save_uri = $req-> uri;
+
+		my $fullpath = $save_uri-> path;
+		$fullpath = "/$fullpath" unless $fullpath =~ m[^/];
+		$req-> uri( $fullpath);
+	}
+	$req_line = $req-> as_string("\x0d\x0a");
+	$req-> uri($save_uri) if defined $save_uri;
+
 	lambda {
 		# send request
-		$req = $req-> as_string("\x0d\x0a");
 		context 
 			$self-> {writer}, 
-			$self-> {socket}, \ $req, 
+			$self-> {socket}, \ $req_line, 
 			undef, 0, $self-> {deadline};
 	state write => tail {
 		my ( $bytes_written, $error) = @_;
