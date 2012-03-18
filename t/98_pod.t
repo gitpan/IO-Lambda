@@ -1,5 +1,5 @@
 #! /usr/bin/perl
-# $Id: 98_pod.t,v 1.1.1.1 2007/12/11 14:48:38 dk Exp $
+# $Id: 98_pod.t,v 1.1 2007/12/11 14:48:38 dk Exp $
 
 use strict;
 use warnings;

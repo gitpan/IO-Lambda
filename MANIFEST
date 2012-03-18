@@ -69,4 +69,5 @@ eg/bench/tcp-poe-components.pl
 eg/bench/tcp-raw.pl
 eg/bench/2.4GHz-x86-64.tcp.benchmark
 eg/bench/1.2GHz-win32.tcpbenchmark
-META.yml                                 Module meta-data (added by MakeMaker)
+META.yml                                 Module YAML meta-data (added by MakeMaker)
+META.json                                Module JSON meta-data (added by MakeMaker)
